@@ -6,6 +6,9 @@ crash.log
 crash.*.log
 *.tfvars
 *.tfvars.json
+# ...but DO commit the non-secret per-environment var files. Secrets never live
+# here — they stay in the root terraform.tfvars (above) or GitHub Secrets.
+!terraform/environments/*/terraform.tfvars
 override.tf
 override.tf.json
 *_override.tf
@@ -52,6 +55,9 @@ yarn-error.log
 dist/
 build/
 *.egg-info/
+
+# Personal research notes / Obsidian vault — kept local, not in the repo
+Research/
 
 # Data (local cache)
 data/local/

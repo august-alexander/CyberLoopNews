@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+nist_api_key = "your-nist-nvd-api-key"
+inbox_email  = "you@example.com" # where alerts are delivered
+
+# Optional overrides:
+# aws_region          = "us-east-1"
+# aws_profile         = "default"
+# schedule_expression = "cron(0 12 * * ? *)" # daily 12:00 UTC (8am ET during EDT)
+# lookback_hours      = 24
