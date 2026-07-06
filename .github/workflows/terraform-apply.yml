@@ -1,0 +1,55 @@
+# Runs on push to dev or main: applies that branch's environment.
+# workspace == branch, var-file == environments/<branch>/terraform.tfvars.
+# The `environment:` line ties the job to a GitHub Environment of the same
+# name — so the `main` environment's Required reviewers become the approval
+# gate before any prod apply.
+name: Terraform Apply
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - "terraform/**"
+      - "src/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: us-east-1
+  TF_VAR_aws_profile: "" # use env creds, not a named profile
+  TF_VAR_nist_api_key: ${{ secrets.NIST_API_KEY }}
+  TF_VAR_inbox_email: ${{ secrets.INBOX_EMAIL }}
+
+jobs:
+  apply:
+    name: apply (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }} # gate: matches GitHub Environment (main = reviewers)
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      # ENV = the branch that was pushed (dev or main).
+      - name: Resolve environment from branch
+        run: echo "ENV=${{ github.ref_name }}" >> "$GITHUB_ENV"
+
+      - name: Init
+        run: terraform init -input=false
+
+      # Workspace name == branch name. Create it if this is its first run.
+      - name: Select workspace
+        run: terraform workspace select "$ENV" || terraform workspace new "$ENV"
+
+      - name: Apply
+        run: terraform apply -input=false -auto-approve -var-file="environments/$ENV/terraform.tfvars"

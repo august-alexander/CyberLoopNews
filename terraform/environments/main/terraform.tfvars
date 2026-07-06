@@ -14,7 +14,7 @@ environment = "main"
 aws_region = "us-east-1"
 project    = "cyberloopnews"
 
-s3_bucket_name = "cyberloopnews-cve-data"
+s3_bucket_name = "cyberloopnews-cve-data-main"
 state_key      = "state/last_fetch.json"
 
 schedule_expression = "cron(0 12 * * ? *)" # daily 12:00 UTC
