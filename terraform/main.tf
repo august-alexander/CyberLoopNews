@@ -42,7 +42,7 @@ resource "terraform_data" "environment_guard" {
 
 terraform {
   backend "s3" {
-    bucket       = "cyberloopnews-state-221876793592-us-east-1-an"
+    bucket       = "cyberloopnews-state"
     key          = "terraform.tfstate" # Path inside the bucket
     region       = "us-east-1"         # Your AWS region
     encrypt      = true                # Encrypts state at rest
