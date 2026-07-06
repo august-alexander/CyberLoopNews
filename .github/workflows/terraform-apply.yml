@@ -45,6 +45,15 @@ jobs:
       - name: Resolve environment from branch
         run: echo "ENV=${{ github.ref_name }}" >> "$GITHUB_ENV"
 
+      # TEMP diagnostic: prints only lengths, never the secret values.
+      # Expect ~20 and ~40. A 0 means the secret isn't reaching this job.
+      - name: Check credentials are present
+        run: |
+          echo "AWS_ACCESS_KEY_ID length:     ${#AWS_ACCESS_KEY_ID}"
+          echo "AWS_SECRET_ACCESS_KEY length: ${#AWS_SECRET_ACCESS_KEY}"
+          echo "NIST_API_KEY length (TF_VAR): ${#TF_VAR_nist_api_key}"
+          echo "region: $AWS_DEFAULT_REGION"
+
       - name: Init
         run: terraform init -input=false
 
