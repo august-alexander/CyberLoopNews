@@ -13,18 +13,19 @@ on:
 permissions:
   contents: read
 
-env:
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  AWS_DEFAULT_REGION: us-east-1
-  TF_VAR_aws_profile: "" # use env creds, not a named profile
-  TF_VAR_nist_api_key: ${{ secrets.NIST_API_KEY }}
-  TF_VAR_inbox_email: ${{ secrets.INBOX_EMAIL }}
-
 jobs:
   plan:
     name: plan (${{ github.base_ref }})
     runs-on: ubuntu-latest
+    # NOTE: env lives at JOB level — the secrets context is not available in a
+    # workflow-level env block, only job/step level.
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: us-east-1
+      TF_VAR_aws_profile: "" # use env creds, not a named profile
+      TF_VAR_nist_api_key: ${{ secrets.NIST_API_KEY }}
+      TF_VAR_inbox_email: ${{ secrets.INBOX_EMAIL }}
     defaults:
       run:
         working-directory: terraform
