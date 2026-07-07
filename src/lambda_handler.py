@@ -1,7 +1,10 @@
-"""Lambda entry point: fetch newly-published CVEs, store them, and alert on new.
+"""Fetcher Lambda: fetch newly-published CVEs and store them in S3.
 
-Triggered daily by EventBridge. Sends exactly ONE summary SMS per run (only
-when new CVEs are found) so the phone never gets flooded regardless of volume.
+Single responsibility — this Lambda only fetches and saves. It writes the raw
+payload to raw/<timestamp>/cves.json and advances the last-fetch state marker.
+It does NOT alert or report; the report Lambda owns all outbound email.
+
+Triggered daily by EventBridge.
 """
 
 import json
@@ -76,29 +79,10 @@ def _store_raw(s3, bucket, now, total_results, vulnerabilities):
     return key
 
 
-def _send_alert(sns, topic_arn, new_count):
-    """Publish a single count-only SMS: 'something new appeared'."""
-    message = f"CyberLoop: {new_count} new CVE(s) detected since last check."
-    sns.publish(
-        TopicArn=topic_arn,
-        Message=message,
-        Subject="CyberLoop CVE Alert",
-        MessageAttributes={
-            # Transactional = higher delivery priority/reliability for alerts.
-            "AWS.SNS.SMS.SMSType": {
-                "DataType": "String",
-                "StringValue": "Transactional",
-            }
-        },
-    )
-    return message
-
-
 def lambda_handler(event, context):
     Config.validate()
 
     s3 = boto3.client("s3", region_name=Config.AWS_REGION)
-    sns = boto3.client("sns", region_name=Config.AWS_REGION)
 
     now = _utcnow()
     state = _load_state(s3, Config.S3_BUCKET, Config.STATE_KEY)
@@ -119,7 +103,6 @@ def lambda_handler(event, context):
         "new_cve_count": total_results,
         "window_start": window_start.isoformat(),
         "window_end": now.isoformat(),
-        "alerted": False,
         "raw_key": None,
     }
 
@@ -127,10 +110,6 @@ def lambda_handler(event, context):
         result["raw_key"] = _store_raw(
             s3, Config.S3_BUCKET, now, total_results, vulnerabilities
         )
-
-        if Config.SNS_TOPIC_ARN:
-            result["message"] = _send_alert(sns, Config.SNS_TOPIC_ARN, total_results)
-            result["alerted"] = True
 
     cumulative += total_results
     _save_state(s3, Config.S3_BUCKET, Config.STATE_KEY, now, total_results, cumulative)

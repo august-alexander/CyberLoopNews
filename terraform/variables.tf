@@ -56,9 +56,15 @@ variable "inbox_email" {
 }
 
 variable "schedule_expression" {
-  description = "EventBridge schedule. Default: daily at 12:00 UTC (8am ET during EDT)."
+  description = "EventBridge schedule for the fetcher. Default: daily at 12:00 UTC (8am ET during EDT)."
   type        = string
   default     = "cron(0 12 * * ? *)"
+}
+
+variable "report_schedule_expression" {
+  description = "EventBridge schedule for the reporter. Default: daily at 12:15 UTC, 15 min after the fetcher."
+  type        = string
+  default     = "cron(15 12 * * ? *)"
 }
 
 variable "lookback_hours" {
