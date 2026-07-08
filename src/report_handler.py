@@ -23,20 +23,22 @@ except ImportError:  # pragma: no cover - local/dev path
     from src.config import Config
 
 RAW_PREFIX = "raw/"
+EDGAR_PREFIX = "edgar/"
 
 
-def _latest_raw_key(s3, bucket):
-    """Return the newest raw/<ts>/cves.json key, or None if none exist.
+def _latest_key(s3, bucket, prefix, suffix):
+    """Return the newest key under `prefix` ending in `suffix`, or None.
 
-    Keys are timestamped (raw/YYYYmmddHHMMSS/cves.json), so the lexicographically
-    largest key is also the most recent.
+    Both the CVE fetcher (raw/<ts>/cves.json) and the EDGAR fetcher
+    (edgar/<ts>/filings.json) use timestamped keys, so the lexicographically
+    largest matching key is also the most recent.
     """
     latest = None
     paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=RAW_PREFIX):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
             key = obj["Key"]
-            if key.endswith("/cves.json") and (latest is None or key > latest):
+            if key.endswith(suffix) and (latest is None or key > latest):
                 latest = key
     return latest
 
@@ -130,19 +132,45 @@ def _build_report(payload):
     return "\n".join(lines)
 
 
+def _build_edgar_section(payload):
+    """Return the SEC 8-K Item 1.05 (cybersecurity incident) section as a list
+    of report lines. Most recent filings first.
+    """
+    filings = payload.get("filings", [])
+    lines = ["", "", "SEC 8-K cybersecurity incident disclosures (Item 1.05):"]
+    if not filings:
+        lines.append("  (none disclosed in the latest window)")
+        return lines
+
+    for f in sorted(filings, key=lambda x: x.get("file_date") or "", reverse=True):
+        lines.append(f"  {f.get('file_date', '?')}  {f.get('company', '(unknown)')}")
+        if f.get("url"):
+            lines.append(f"      {f['url']}")
+    return lines
+
+
 def lambda_handler(event, context):
     s3 = boto3.client("s3", region_name=Config.AWS_REGION)
     sns = boto3.client("sns", region_name=Config.AWS_REGION)
 
-    key = _latest_raw_key(s3, Config.S3_BUCKET)
-    if key is None:
+    cve_key = _latest_key(s3, Config.S3_BUCKET, RAW_PREFIX, "/cves.json")
+    if cve_key is None:
         print(json.dumps({"reported": False, "reason": "no raw data"}))
         return {"reported": False}
 
-    payload = json.loads(
-        s3.get_object(Bucket=Config.S3_BUCKET, Key=key)["Body"].read()
+    cve_payload = json.loads(
+        s3.get_object(Bucket=Config.S3_BUCKET, Key=cve_key)["Body"].read()
     )
-    body = _build_report(payload)
+    body = _build_report(cve_payload)
+
+    # Merge in the latest EDGAR dump if the EDGAR fetcher has run. Best-effort:
+    # the CVE report still goes out even if no EDGAR data exists yet.
+    edgar_key = _latest_key(s3, Config.S3_BUCKET, EDGAR_PREFIX, "/filings.json")
+    if edgar_key is not None:
+        edgar_payload = json.loads(
+            s3.get_object(Bucket=Config.S3_BUCKET, Key=edgar_key)["Body"].read()
+        )
+        body += "\n" + "\n".join(_build_edgar_section(edgar_payload))
 
     sns.publish(
         TopicArn=Config.SNS_TOPIC_ARN,
@@ -150,6 +178,6 @@ def lambda_handler(event, context):
         Message=body,
     )
 
-    result = {"reported": True, "raw_key": key}
+    result = {"reported": True, "raw_key": cve_key, "edgar_key": edgar_key}
     print(json.dumps(result))
     return result

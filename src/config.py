@@ -17,6 +17,14 @@ class Config:
     AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
     AWS_PROFILE = os.getenv("AWS_PROFILE", "default")
 
+    # SEC EDGAR — full-text search for 8-K Item 1.05 (material cybersecurity
+    # incident) disclosures. SEC REQUIRES a descriptive User-Agent with contact
+    # info; requests without one get HTTP 403.
+    EDGAR_FTS_URL = os.getenv("EDGAR_FTS_URL", "https://efts.sec.gov/LATEST/search-index")
+    EDGAR_USER_AGENT = os.getenv("EDGAR_USER_AGENT", "CyberLoopNews aalexand@rednaxela.technology")
+    EDGAR_LOOKBACK_DAYS = int(os.getenv("EDGAR_LOOKBACK_DAYS", "1"))
+    EDGAR_PREFIX = os.getenv("EDGAR_PREFIX", "edgar/")
+
     # Pipeline (Lambda) — Terraform injects these as env vars
     S3_BUCKET = os.getenv("S3_BUCKET", "cyberloopnews-cve-data")
     STATE_KEY = os.getenv("STATE_KEY", "state/last_fetch.json")

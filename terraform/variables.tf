@@ -61,10 +61,28 @@ variable "schedule_expression" {
   default     = "cron(0 12 * * ? *)"
 }
 
+variable "edgar_schedule_expression" {
+  description = "EventBridge schedule for the EDGAR fetcher. Default: daily at 12:05 UTC, between the CVE fetcher and the reporter."
+  type        = string
+  default     = "cron(5 12 * * ? *)"
+}
+
 variable "report_schedule_expression" {
   description = "EventBridge schedule for the reporter. Default: daily at 12:15 UTC, 15 min after the fetcher."
   type        = string
   default     = "cron(15 12 * * ? *)"
+}
+
+variable "edgar_user_agent" {
+  description = "User-Agent for SEC EDGAR requests. SEC requires a descriptive value with contact info or returns HTTP 403."
+  type        = string
+  default     = "CyberLoopNews aalexand@rednaxela.technology"
+}
+
+variable "edgar_lookback_days" {
+  description = "How many days back the EDGAR fetcher searches for 8-K Item 1.05 filings on each run."
+  type        = number
+  default     = 1
 }
 
 variable "lookback_hours" {

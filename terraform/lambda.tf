@@ -33,6 +33,43 @@ resource "aws_lambda_function" "fetcher" {
   tags = local.tags
 }
 
+# EDGAR fetcher: pulls recent 8-K Item 1.05 (material cybersecurity incident)
+# disclosures from SEC EDGAR and writes edgar/<ts>/filings.json to S3. Ships in
+# the same zip; only the handler entrypoint differs. Reuses the fetcher IAM
+# role — it already grants exactly the S3 get/put/list this needs.
+resource "aws_cloudwatch_log_group" "edgar" {
+  name              = "/aws/lambda/${local.name_prefix}-edgar-fetcher"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+resource "aws_lambda_function" "edgar_fetcher" {
+  function_name = "${local.name_prefix}-edgar-fetcher"
+  role          = aws_iam_role.lambda.arn
+  runtime       = "python3.12"
+  handler       = "edgar_handler.lambda_handler"
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      S3_BUCKET           = var.s3_bucket_name
+      EDGAR_USER_AGENT    = var.edgar_user_agent
+      EDGAR_LOOKBACK_DAYS = var.edgar_lookback_days
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.lambda,
+    aws_cloudwatch_log_group.edgar,
+  ]
+
+  tags = local.tags
+}
+
 resource "aws_cloudwatch_log_group" "reporter" {
   name              = "/aws/lambda/${local.name_prefix}-reporter"
   retention_in_days = 14

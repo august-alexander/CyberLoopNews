@@ -19,6 +19,29 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.schedule.arn
 }
 
+# EDGAR fetcher runs on its own schedule, between the CVE fetcher and the
+# reporter, so both raw dumps are in S3 before the reporter reads them.
+resource "aws_cloudwatch_event_rule" "edgar_schedule" {
+  name                = "${local.name_prefix}-edgar-fetcher-schedule"
+  description         = "Trigger the EDGAR 8-K 1.05 fetcher on a schedule."
+  schedule_expression = var.edgar_schedule_expression
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "edgar" {
+  rule      = aws_cloudwatch_event_rule.edgar_schedule.name
+  target_id = "${local.name_prefix}-edgar-fetcher"
+  arn       = aws_lambda_function.edgar_fetcher.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_edgar" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.edgar_fetcher.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.edgar_schedule.arn
+}
+
 # Reporter runs on its own schedule, shortly after the fetcher, so the latest
 # raw dump is already in S3 by the time it reads.
 resource "aws_cloudwatch_event_rule" "report_schedule" {
