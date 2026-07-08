@@ -41,8 +41,8 @@ def _latest_raw_key(s3, bucket):
     return latest
 
 
-# How many operating systems to list in the OS breakdown before truncating.
-TOP_OS_LIMIT = 10
+# How many affected products to list in the breakdown before truncating.
+TOP_PRODUCT_LIMIT = 10
 
 
 def _cvss(cve):
@@ -50,7 +50,7 @@ def _cvss(cve):
     version present. Returns (None, "UNKNOWN") when no score is available.
     """
     metrics = cve.get("metrics", {})
-    for version in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+    for version in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
         entries = metrics.get(version)
         if not entries:
             continue
@@ -64,24 +64,26 @@ def _cvss(cve):
     return None, "UNKNOWN"
 
 
-def _operating_systems(cve):
-    """Return the set of operating systems a CVE affects.
+def _affected_products(cve):
+    """Return the set of 'vendor/product' strings a CVE affects.
 
-    OS entries are CPEs whose 'part' field is 'o'
-    (cpe:2.3:o:<vendor>:<product>:...). We key on vendor/product.
+    Uses the CNA-supplied affected products the fetcher attached as
+    cve["cnaAffected"]. Unlike NVD's `configurations` (CPE) data — which is
+    empty until NVD analyzes a CVE — these are populated at publish time, so
+    brand-new CVEs still get a product breakdown.
     """
-    oses = set()
-    for config in cve.get("configurations", []):
-        for node in config.get("nodes", []):
-            for match in node.get("cpeMatch", []):
-                parts = match.get("criteria", "").split(":")
-                if len(parts) > 4 and parts[2] == "o":
-                    oses.add(f"{parts[3]}/{parts[4]}")
-    return oses
+    products = set()
+    for entry in cve.get("cnaAffected", []):
+        vendor = entry.get("vendor", "").strip()
+        product = entry.get("product", "").strip()
+        if not product:
+            continue
+        products.add(f"{vendor}/{product}" if vendor else product)
+    return products
 
 
 def _build_report(payload):
-    """Build the report body: new count, top 5 by severity, and OS breakdown."""
+    """Build the report body: new count, top 5 by severity, and product breakdown."""
     cves = [v["cve"] for v in payload.get("vulnerabilities", []) if "cve" in v]
 
     # Top 5 by CVSS base score (highest first).
@@ -94,12 +96,12 @@ def _build_report(payload):
     scored.sort(key=lambda x: x[0], reverse=True)
     top5 = scored[:5]
 
-    # CVE count per operating system (a CVE affecting several OSes counts once
-    # for each), most-affected first.
-    os_counts = Counter()
+    # CVE count per affected product (a CVE affecting several products counts
+    # once for each), most-affected first.
+    product_counts = Counter()
     for cve in cves:
-        for os_name in _operating_systems(cve):
-            os_counts[os_name] += 1
+        for product in _affected_products(cve):
+            product_counts[product] += 1
 
     lines = [
         "CyberLoop CVE Report",
@@ -113,14 +115,17 @@ def _build_report(payload):
     else:
         lines.append("  (no CVSS scores available)")
 
-    lines += ["", "CVEs by operating system:"]
-    if os_counts:
-        lines += [f"  {count:>4}  {name}" for name, count in os_counts.most_common(TOP_OS_LIMIT)]
-        remaining = len(os_counts) - TOP_OS_LIMIT
+    lines += ["", "Top affected products:"]
+    if product_counts:
+        lines += [
+            f"  {count:>4}  {name}"
+            for name, count in product_counts.most_common(TOP_PRODUCT_LIMIT)
+        ]
+        remaining = len(product_counts) - TOP_PRODUCT_LIMIT
         if remaining > 0:
             lines.append(f"  ... and {remaining} more")
     else:
-        lines.append("  (no OS-specific CVEs)")
+        lines.append("  (no affected-product data)")
 
     return "\n".join(lines)
 

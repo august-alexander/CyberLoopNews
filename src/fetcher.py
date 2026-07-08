@@ -16,6 +16,14 @@ PAGE_DELAY_SECONDS = 1.0
 # %Y%m%d%H%M%S convention we use for our own S3 keys / state file.
 NVD_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.000"
 
+# CVE.org (MITRE) record API. NVD's `configurations` (CPE) data is only filled
+# in during NVD's own analysis, so brand-new CVEs carry no product/OS info
+# there. The CVE.org record, however, exposes the CNA's `affected[]` list at
+# publish time — vendor/product/versions are populated immediately. We enrich
+# each fetched CVE with that so the report has a signal for fresh CVEs.
+CVE_ORG_API = "https://cveawg.mitre.org/api/cve/"
+ENRICH_DELAY_SECONDS = 0.34
+
 
 def _request(base_url, params, api_key, timeout=30):
     """Perform a single GET against the NVD API and return parsed JSON."""
@@ -66,6 +74,57 @@ def fetch_cves_by_pub_date(base_url, api_key, pub_start, pub_end):
         time.sleep(PAGE_DELAY_SECONDS)
 
     return total_results, vulnerabilities
+
+
+def fetch_cna_affected(cve_id, timeout=15):
+    """Return the CNA-supplied affected products for one CVE from CVE.org.
+
+    Reads containers.cna.affected[] and returns a deduped list of
+    {"vendor", "product"} dicts. Best-effort: any network/parse error (or a CVE
+    not yet mirrored by CVE.org) yields []. Placeholder products like "n/a" are
+    dropped so they don't pollute the breakdown.
+    """
+    url = f"{CVE_ORG_API}{urllib.parse.quote(cve_id)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "CyberLoopNews/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            record = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return []
+
+    affected = record.get("containers", {}).get("cna", {}).get("affected", []) or []
+    products = []
+    seen = set()
+    for entry in affected:
+        vendor = (entry.get("vendor") or "").strip()
+        product = (entry.get("product") or "").strip()
+        if not product or product.lower() in ("n/a", "unknown"):
+            continue
+        key = (vendor.lower(), product.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        products.append({"vendor": vendor, "product": product})
+    return products
+
+
+def enrich_with_cna_affected(vulnerabilities):
+    """Attach CNA-supplied affected products to each vuln, in place.
+
+    Sets cve["cnaAffected"] = [{"vendor", "product"}, ...]. One CVE.org request
+    per CVE, throttled by ENRICH_DELAY_SECONDS. For the daily delta this is a
+    modest number of requests; if the fetch window is ever very large, budget
+    Lambda timeout accordingly.
+    """
+    last = len(vulnerabilities) - 1
+    for i, vuln in enumerate(vulnerabilities):
+        cve = vuln.get("cve")
+        if not cve or "id" not in cve:
+            continue
+        cve["cnaAffected"] = fetch_cna_affected(cve["id"])
+        if i < last:
+            time.sleep(ENRICH_DELAY_SECONDS)
+    return vulnerabilities
 
 
 def extract_cve_ids(vulnerabilities):

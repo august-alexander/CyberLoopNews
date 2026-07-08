@@ -16,10 +16,10 @@ import boto3
 # local imports (from the src package).
 try:
     from config import Config
-    from fetcher import fetch_cves_by_pub_date
+    from fetcher import enrich_with_cna_affected, fetch_cves_by_pub_date
 except ImportError:  # pragma: no cover - local/dev path
     from src.config import Config
-    from src.fetcher import fetch_cves_by_pub_date
+    from src.fetcher import enrich_with_cna_affected, fetch_cves_by_pub_date
 
 # Timestamp convention for our own S3 keys + state file (matches test_nvd.py).
 KEY_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
@@ -98,6 +98,11 @@ def lambda_handler(event, context):
     total_results, vulnerabilities = fetch_cves_by_pub_date(
         Config.NIST_API_BASE_URL, Config.NIST_API_KEY, window_start, now
     )
+
+    # Enrich with CNA-supplied affected products (vendor/product) from CVE.org.
+    # NVD's CPE `configurations` are empty until NVD analyzes a CVE, so this is
+    # the only product signal available for brand-new CVEs.
+    enrich_with_cna_affected(vulnerabilities)
 
     result = {
         "new_cve_count": total_results,
