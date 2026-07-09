@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - local/dev path
 
 RAW_PREFIX = "raw/"
 EDGAR_PREFIX = "edgar/"
+EDGAR_6K_PREFIX = "edgar6k/"
 
 
 def _latest_key(s3, bucket, prefix, suffix):
@@ -132,12 +133,15 @@ def _build_report(payload):
     return "\n".join(lines)
 
 
-def _build_edgar_section(payload):
-    """Return the SEC 8-K Item 1.05 (cybersecurity incident) section as a list
-    of report lines. Most recent filings first.
+def _build_edgar_section(payload, title):
+    """Return an SEC filings section (given a heading) as a list of report lines.
+
+    Shared by the 8-K (domestic Item 1.05) and 6-K (foreign private issuer)
+    cyber-disclosure feeds — both store the same normalized filing shape. Most
+    recent filings first.
     """
     filings = payload.get("filings", [])
-    lines = ["", "", "SEC 8-K cybersecurity incident disclosures (Item 1.05):"]
+    lines = ["", "", title]
     if not filings:
         lines.append("  (none disclosed in the latest window)")
         return lines
@@ -163,14 +167,31 @@ def lambda_handler(event, context):
     )
     body = _build_report(cve_payload)
 
-    # Merge in the latest EDGAR dump if the EDGAR fetcher has run. Best-effort:
+    # Merge in the latest EDGAR dumps if the fetchers have run. Best-effort:
     # the CVE report still goes out even if no EDGAR data exists yet.
     edgar_key = _latest_key(s3, Config.S3_BUCKET, EDGAR_PREFIX, "/filings.json")
     if edgar_key is not None:
         edgar_payload = json.loads(
             s3.get_object(Bucket=Config.S3_BUCKET, Key=edgar_key)["Body"].read()
         )
-        body += "\n" + "\n".join(_build_edgar_section(edgar_payload))
+        body += "\n" + "\n".join(
+            _build_edgar_section(
+                edgar_payload,
+                "SEC 8-K cybersecurity incident disclosures (Item 1.05):",
+            )
+        )
+
+    edgar_6k_key = _latest_key(s3, Config.S3_BUCKET, EDGAR_6K_PREFIX, "/filings.json")
+    if edgar_6k_key is not None:
+        edgar_6k_payload = json.loads(
+            s3.get_object(Bucket=Config.S3_BUCKET, Key=edgar_6k_key)["Body"].read()
+        )
+        body += "\n" + "\n".join(
+            _build_edgar_section(
+                edgar_6k_payload,
+                "SEC 6-K cybersecurity incident disclosures (foreign private issuers):",
+            )
+        )
 
     sns.publish(
         TopicArn=Config.SNS_TOPIC_ARN,
@@ -178,6 +199,11 @@ def lambda_handler(event, context):
         Message=body,
     )
 
-    result = {"reported": True, "raw_key": cve_key, "edgar_key": edgar_key}
+    result = {
+        "reported": True,
+        "raw_key": cve_key,
+        "edgar_key": edgar_key,
+        "edgar_6k_key": edgar_6k_key,
+    }
     print(json.dumps(result))
     return result

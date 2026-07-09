@@ -67,6 +67,12 @@ variable "edgar_schedule_expression" {
   default     = "cron(5 12 * * ? *)"
 }
 
+variable "edgar_6k_schedule_expression" {
+  description = "EventBridge schedule for the EDGAR 6-K fetcher. Default: daily at 12:10 UTC, between the 8-K fetcher and the reporter."
+  type        = string
+  default     = "cron(10 12 * * ? *)"
+}
+
 variable "report_schedule_expression" {
   description = "EventBridge schedule for the reporter. Default: daily at 12:15 UTC, 15 min after the fetcher."
   type        = string

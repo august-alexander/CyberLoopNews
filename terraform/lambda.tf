@@ -70,6 +70,43 @@ resource "aws_lambda_function" "edgar_fetcher" {
   tags = local.tags
 }
 
+# EDGAR 6-K fetcher: pulls recent 6-K cybersecurity incident disclosures (foreign
+# private issuers) from SEC EDGAR and writes edgar6k/<ts>/filings.json to S3.
+# Ships in the same zip; only the handler entrypoint differs. Reuses the fetcher
+# IAM role — same S3 get/put/list, no SNS.
+resource "aws_cloudwatch_log_group" "edgar_6k" {
+  name              = "/aws/lambda/${local.name_prefix}-edgar-6k-fetcher"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+resource "aws_lambda_function" "edgar_6k_fetcher" {
+  function_name = "${local.name_prefix}-edgar-6k-fetcher"
+  role          = aws_iam_role.lambda.arn
+  runtime       = "python3.12"
+  handler       = "edgar_6k_handler.lambda_handler"
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      S3_BUCKET           = var.s3_bucket_name
+      EDGAR_USER_AGENT    = var.edgar_user_agent
+      EDGAR_LOOKBACK_DAYS = var.edgar_lookback_days
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.lambda,
+    aws_cloudwatch_log_group.edgar_6k,
+  ]
+
+  tags = local.tags
+}
+
 resource "aws_cloudwatch_log_group" "reporter" {
   name              = "/aws/lambda/${local.name_prefix}-reporter"
   retention_in_days = 14

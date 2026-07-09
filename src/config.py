@@ -24,6 +24,10 @@ class Config:
     EDGAR_USER_AGENT = os.getenv("EDGAR_USER_AGENT", "CyberLoopNews aalexand@rednaxela.technology")
     EDGAR_LOOKBACK_DAYS = int(os.getenv("EDGAR_LOOKBACK_DAYS", "1"))
     EDGAR_PREFIX = os.getenv("EDGAR_PREFIX", "edgar/")
+    # 6-K (foreign private issuer) cyber disclosures land under their own prefix
+    # so they never collide with the 8-K dumps. Note the trailing slash keeps
+    # "edgar/" and "edgar6k/" as distinct S3 prefixes.
+    EDGAR_6K_PREFIX = os.getenv("EDGAR_6K_PREFIX", "edgar6k/")
 
     # Pipeline (Lambda) — Terraform injects these as env vars
     S3_BUCKET = os.getenv("S3_BUCKET", "cyberloopnews-cve-data")

@@ -42,6 +42,29 @@ resource "aws_lambda_permission" "allow_eventbridge_edgar" {
   source_arn    = aws_cloudwatch_event_rule.edgar_schedule.arn
 }
 
+# EDGAR 6-K fetcher runs on its own schedule, after the 8-K fetcher and before
+# the reporter, so all dumps are in S3 before the reporter reads them.
+resource "aws_cloudwatch_event_rule" "edgar_6k_schedule" {
+  name                = "${local.name_prefix}-edgar-6k-fetcher-schedule"
+  description         = "Trigger the EDGAR 6-K cyber-incident fetcher on a schedule."
+  schedule_expression = var.edgar_6k_schedule_expression
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "edgar_6k" {
+  rule      = aws_cloudwatch_event_rule.edgar_6k_schedule.name
+  target_id = "${local.name_prefix}-edgar-6k-fetcher"
+  arn       = aws_lambda_function.edgar_6k_fetcher.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_edgar_6k" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.edgar_6k_fetcher.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.edgar_6k_schedule.arn
+}
+
 # Reporter runs on its own schedule, shortly after the fetcher, so the latest
 # raw dump is already in S3 by the time it reads.
 resource "aws_cloudwatch_event_rule" "report_schedule" {
