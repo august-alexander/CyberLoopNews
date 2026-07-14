@@ -44,6 +44,9 @@ class Config:
     BEDROCK_MODEL_ID = os.getenv(
         "BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     )
+    # Batch analyzer: cap CVEs scored per invocation so a burst can't run the
+    # Lambda past its timeout; leftovers are picked up on the next run.
+    ANALYSIS_MAX_PER_RUN = int(os.getenv("ANALYSIS_MAX_PER_RUN", "50"))
 
     # Application
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")

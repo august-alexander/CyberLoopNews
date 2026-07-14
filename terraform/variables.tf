@@ -47,6 +47,24 @@ variable "bedrock_model_id" {
   default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
+variable "analysis_schedule_expression" {
+  description = "EventBridge schedule for the analyzer. Default: hourly at :10, after the fetcher at :00."
+  type        = string
+  default     = "cron(10 * * * ? *)"
+}
+
+variable "analysis_timeout" {
+  description = "Analyzer Lambda timeout in seconds. Batch mode makes one Bedrock call per CVE, so it needs longer than the fetchers."
+  type        = number
+  default     = 600
+}
+
+variable "analysis_max_per_run" {
+  description = "Max CVEs the analyzer scores per invocation. Caps runtime/cost; leftovers score on the next run."
+  type        = number
+  default     = 50
+}
+
 variable "nist_api_key" {
   description = "NIST NVD API key."
   type        = string

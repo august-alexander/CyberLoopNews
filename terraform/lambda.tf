@@ -148,16 +148,18 @@ resource "aws_cloudwatch_log_group" "analyzer" {
   tags              = local.tags
 }
 
-# Analyzer: LoopScores a single CVE (via Bedrock Converse) and writes the result
-# to the analysis bucket. Ships in the same zip as the other Lambdas; only the
-# handler entrypoint differs. No trigger yet — invoked manually / by console test
-# event with {"cve": <nvd cve dict>}; the fan-out trigger is a later increment.
+# Analyzer: LoopScores CVEs (via Bedrock Converse) and writes the results to the
+# analysis bucket. Ships in the same zip as the other Lambdas; only the handler
+# entrypoint differs. Runs hourly via EventBridge (batch mode over the latest
+# scan); also invokable manually with {"cve": …} or {"random": true}. Given a
+# longer timeout than the fetchers since a batch run makes one Bedrock call per
+# CVE.
 resource "aws_lambda_function" "analyzer" {
   function_name = "${local.name_prefix}-analyzer"
   role          = aws_iam_role.analyzer.arn
   runtime       = "python3.12"
   handler       = "analysis_handler.lambda_handler"
-  timeout       = var.lambda_timeout
+  timeout       = var.analysis_timeout
   memory_size   = var.lambda_memory
 
   filename         = data.archive_file.lambda_zip.output_path
@@ -165,9 +167,10 @@ resource "aws_lambda_function" "analyzer" {
 
   environment {
     variables = {
-      S3_BUCKET        = var.s3_bucket_name        # source data bucket (raw scans)
-      OUTPUT_BUCKET    = aws_s3_bucket.analysis.id # scored outputs land here
-      BEDROCK_MODEL_ID = var.bedrock_model_id
+      S3_BUCKET            = var.s3_bucket_name        # source data bucket (raw scans)
+      OUTPUT_BUCKET        = aws_s3_bucket.analysis.id # scored outputs land here
+      BEDROCK_MODEL_ID     = var.bedrock_model_id
+      ANALYSIS_MAX_PER_RUN = var.analysis_max_per_run
     }
   }
 

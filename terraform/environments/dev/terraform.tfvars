@@ -19,5 +19,5 @@ s3_bucket_name     = "cyberloopnews-cve-data-dev"
 output_bucket_name = "cyberloopnews-cve-analysis-dev"
 state_key          = "state/last_fetch.json"
 
-schedule_expression = "cron(0 12 * * ? *)" # daily 12:00 UTC
+schedule_expression = "cron(0 * * * ? *)" # hourly at :00 (small delta per fetch)
 lookback_hours      = 24
