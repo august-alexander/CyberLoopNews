@@ -141,3 +141,40 @@ resource "aws_lambda_function" "reporter" {
 
   tags = local.tags
 }
+
+resource "aws_cloudwatch_log_group" "analyzer" {
+  name              = "/aws/lambda/${local.name_prefix}-analyzer"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+# Analyzer: LoopScores a single CVE (via Bedrock Converse) and writes the result
+# to the analysis bucket. Ships in the same zip as the other Lambdas; only the
+# handler entrypoint differs. No trigger yet — invoked manually / by console test
+# event with {"cve": <nvd cve dict>}; the fan-out trigger is a later increment.
+resource "aws_lambda_function" "analyzer" {
+  function_name = "${local.name_prefix}-analyzer"
+  role          = aws_iam_role.analyzer.arn
+  runtime       = "python3.12"
+  handler       = "analysis_handler.lambda_handler"
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      S3_BUCKET        = var.s3_bucket_name        # source data bucket (raw scans)
+      OUTPUT_BUCKET    = aws_s3_bucket.analysis.id # scored outputs land here
+      BEDROCK_MODEL_ID = var.bedrock_model_id
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.analyzer,
+    aws_cloudwatch_log_group.analyzer,
+  ]
+
+  tags = local.tags
+}

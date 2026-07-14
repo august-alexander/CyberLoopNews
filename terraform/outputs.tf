@@ -18,6 +18,21 @@ output "sns_topic_arn" {
   value       = aws_sns_topic.alerts.arn
 }
 
+output "analyzer_function_name" {
+  description = "Name of the deployed analyzer Lambda."
+  value       = aws_lambda_function.analyzer.function_name
+}
+
+output "analyzer_log_group" {
+  description = "CloudWatch log group for the analyzer Lambda."
+  value       = aws_cloudwatch_log_group.analyzer.name
+}
+
+output "analysis_bucket" {
+  description = "S3 bucket holding per-CVE LoopScore outputs."
+  value       = aws_s3_bucket.analysis.id
+}
+
 output "schedule_expression" {
   description = "Active EventBridge schedule."
   value       = aws_cloudwatch_event_rule.schedule.schedule_expression

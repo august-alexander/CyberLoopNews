@@ -35,6 +35,18 @@ variable "s3_bucket_name" {
   default     = "cyberloopnews-cve-data"
 }
 
+variable "output_bucket_name" {
+  description = "S3 bucket for per-CVE LoopScore analysis outputs. Created by this stack; set per environment (dev/main) so the branches never share a bucket."
+  type        = string
+  default     = "cyberloopnews-cve-analysis"
+}
+
+variable "bedrock_model_id" {
+  description = "Bedrock model (inference profile) the analyzer uses to score CVEs."
+  type        = string
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+}
+
 variable "nist_api_key" {
   description = "NIST NVD API key."
   type        = string

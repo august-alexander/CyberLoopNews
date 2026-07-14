@@ -15,8 +15,9 @@ project    = "cyberloopnews"
 
 # Referenced (not created) by the stack, so this bucket must already exist.
 # Keep dev separate from prod so test runs never touch real customer data.
-s3_bucket_name = "cyberloopnews-cve-data-dev"
-state_key      = "state/last_fetch.json"
+s3_bucket_name     = "cyberloopnews-cve-data-dev"
+output_bucket_name = "cyberloopnews-cve-analysis-dev"
+state_key          = "state/last_fetch.json"
 
 schedule_expression = "cron(0 12 * * ? *)" # daily 12:00 UTC
 lookback_hours      = 24

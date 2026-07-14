@@ -36,6 +36,15 @@ class Config:
     # On the very first run (no state file yet) look back this many hours.
     LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "24"))
 
+    # Analyzer (Bedrock) — scores each CVE and writes analysis/<cve-id>.json to
+    # the per-environment analysis bucket (OUTPUT_BUCKET) under this prefix, so
+    # outputs are always bound to the branch/env like the rest of the pipeline.
+    OUTPUT_BUCKET = os.getenv("OUTPUT_BUCKET")
+    OUTPUT_PREFIX = os.getenv("OUTPUT_PREFIX", "analysis/")
+    BEDROCK_MODEL_ID = os.getenv(
+        "BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    )
+
     # Application
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"

@@ -14,8 +14,9 @@ environment = "main"
 aws_region = "us-east-1"
 project    = "cyberloopnews"
 
-s3_bucket_name = "cyberloopnews-cve-data-main"
-state_key      = "state/last_fetch.json"
+s3_bucket_name     = "cyberloopnews-cve-data-main"
+output_bucket_name = "cyberloopnews-cve-analysis-main"
+state_key          = "state/last_fetch.json"
 
 schedule_expression = "cron(0 12 * * ? *)" # daily 12:00 UTC
 lookback_hours      = 24

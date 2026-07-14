@@ -100,3 +100,73 @@ resource "aws_iam_role_policy" "reporter" {
   role   = aws_iam_role.reporter.id
   policy = data.aws_iam_policy_document.reporter_permissions.json
 }
+
+# ---------------------------------------------------------------------------
+# Analyzer role: read the raw CVE dumps, invoke Bedrock to score each CVE, and
+# write the scored results to the analysis output bucket.
+# ---------------------------------------------------------------------------
+resource "aws_iam_role" "analyzer" {
+  name               = "${local.name_prefix}-analyzer-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+data "aws_iam_policy_document" "analyzer_permissions" {
+  statement {
+    sid = "Logs"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:aws:logs:*:*:*"]
+  }
+
+  # Read the raw CVE dumps from the source data bucket.
+  statement {
+    sid       = "S3ReadRaw"
+    actions   = ["s3:GetObject"]
+    resources = ["${data.aws_s3_bucket.cve_data.arn}/*"]
+  }
+
+  statement {
+    sid       = "S3ListRaw"
+    actions   = ["s3:ListBucket"]
+    resources = [data.aws_s3_bucket.cve_data.arn]
+  }
+
+  # Read + write scored results in the dedicated analysis output bucket.
+  statement {
+    sid = "S3Analysis"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = ["${aws_s3_bucket.analysis.arn}/*"]
+  }
+
+  statement {
+    sid       = "S3ListAnalysis"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.analysis.arn]
+  }
+
+  # Invoke Claude on Bedrock. Cross-region inference profiles (the "us.*" model
+  # IDs) route to the foundation model in several regions, so both the
+  # inference-profile ARN and the underlying foundation-model ARNs must be
+  # allowed. Scoped to Anthropic models + this account's inference profiles.
+  statement {
+    sid     = "BedrockInvoke"
+    actions = ["bedrock:InvokeModel"]
+    resources = [
+      "arn:aws:bedrock:*::foundation-model/anthropic.*",
+      "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "analyzer" {
+  name   = "${local.name_prefix}-analyzer-policy"
+  role   = aws_iam_role.analyzer.id
+  policy = data.aws_iam_policy_document.analyzer_permissions.json
+}
