@@ -1,17 +1,17 @@
-"""Report Lambda: read the latest CVE dump from S3 and email a small report.
+"""Report Lambda: summarize the last 24h of CVEs from S3 and email a report.
 
-Single responsibility — this Lambda only builds and sends the report. It reads
-the most recent raw/<timestamp>/cves.json that the fetcher saved, summarizes it,
-and publishes that summary to the SNS topic (email).
+Single responsibility — this Lambda only builds and sends the report. The CVE
+fetcher now runs hourly, so a single scan is just one hour's delta; the daily
+report therefore stitches together every raw/<ts>/cves.json from the last 24h
+(deduped by CVE id) so nothing published during the day is missed. EDGAR 8-K/6-K
+stay daily, so their latest filings.json already covers the day.
 
-Triggered daily by EventBridge, shortly after the fetcher.
-
-NOTE: the report body is a deliberate placeholder for now (a count + the CVE
-IDs). We'll flesh out the contents next.
+Triggered daily by EventBridge.
 """
 
 import json
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 
 import boto3
 
@@ -42,6 +42,49 @@ def _latest_key(s3, bucket, prefix, suffix):
             if key.endswith(suffix) and (latest is None or key > latest):
                 latest = key
     return latest
+
+
+# Timestamp convention for our own S3 keys: raw/<%Y%m%d%H%M%S>/cves.json.
+KEY_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
+
+
+def _scans_since(s3, bucket, cutoff):
+    """Return every raw/<ts>/cves.json key whose timestamp is >= cutoff (UTC)."""
+    keys = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=RAW_PREFIX):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith("/cves.json"):
+                continue
+            parts = key.split("/")
+            if len(parts) < 3:
+                continue
+            try:
+                ts = datetime.strptime(parts[1], KEY_TIMESTAMP_FORMAT).replace(
+                    tzinfo=timezone.utc
+                )
+            except ValueError:
+                continue
+            if ts >= cutoff:
+                keys.append(key)
+    return sorted(keys)
+
+
+def _combine_scans(s3, bucket, keys):
+    """Merge several scans into one payload, deduped by CVE id (latest wins)."""
+    merged = {}
+    for key in keys:
+        payload = json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
+        for vuln in payload.get("vulnerabilities", []):
+            cve_id = vuln.get("cve", {}).get("id")
+            if cve_id:
+                merged[cve_id] = vuln
+    return {"vulnerabilities": list(merged.values()), "totalResults": len(merged)}
 
 
 # How many affected products to list in the breakdown before truncating.
@@ -109,7 +152,7 @@ def _build_report(payload):
     lines = [
         "CyberLoop CVE Report",
         "=" * 40,
-        f"{len(cves)} new CVE(s) in the latest fetch.",
+        f"{len(cves)} new CVE(s) in the last 24 hours.",
         "",
         "Top 5 by severity (CVSS base score):",
     ]
@@ -157,14 +200,13 @@ def lambda_handler(event, context):
     s3 = boto3.client("s3", region_name=Config.AWS_REGION)
     sns = boto3.client("sns", region_name=Config.AWS_REGION)
 
-    cve_key = _latest_key(s3, Config.S3_BUCKET, RAW_PREFIX, "/cves.json")
-    if cve_key is None:
-        print(json.dumps({"reported": False, "reason": "no raw data"}))
+    cutoff = _utcnow() - timedelta(hours=Config.REPORT_LOOKBACK_HOURS)
+    cve_keys = _scans_since(s3, Config.S3_BUCKET, cutoff)
+    if not cve_keys:
+        print(json.dumps({"reported": False, "reason": "no scans in 24h window"}))
         return {"reported": False}
 
-    cve_payload = json.loads(
-        s3.get_object(Bucket=Config.S3_BUCKET, Key=cve_key)["Body"].read()
-    )
+    cve_payload = _combine_scans(s3, Config.S3_BUCKET, cve_keys)
     body = _build_report(cve_payload)
 
     # Merge in the latest EDGAR dumps if the fetchers have run. Best-effort:
@@ -201,7 +243,8 @@ def lambda_handler(event, context):
 
     result = {
         "reported": True,
-        "raw_key": cve_key,
+        "scans_in_window": len(cve_keys),
+        "cve_count": cve_payload["totalResults"],
         "edgar_key": edgar_key,
         "edgar_6k_key": edgar_6k_key,
     }

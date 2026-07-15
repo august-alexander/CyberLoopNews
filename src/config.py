@@ -48,6 +48,9 @@ class Config:
     # Lambda past its timeout; leftovers are picked up on the next run.
     ANALYSIS_MAX_PER_RUN = int(os.getenv("ANALYSIS_MAX_PER_RUN", "50"))
 
+    # Reporter: how many hours of hourly CVE scans the daily report aggregates.
+    REPORT_LOOKBACK_HOURS = int(os.getenv("REPORT_LOOKBACK_HOURS", "24"))
+
     # Application
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"
