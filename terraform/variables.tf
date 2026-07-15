@@ -134,9 +134,9 @@ variable "state_key" {
 }
 
 variable "lambda_timeout" {
-  description = "Lambda timeout in seconds (pagination + S3 + SNS)."
+  description = "Lambda timeout in seconds. Steady-state runs finish in seconds; the headroom is for the fetcher to clear a backlog window (NVD pagination + per-CVE enrichment, ~0.65s/CVE) in one catch-up run."
   type        = number
-  default     = 120
+  default     = 200
 }
 
 variable "lambda_memory" {

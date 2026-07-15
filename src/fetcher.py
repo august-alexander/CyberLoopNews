@@ -2,8 +2,16 @@
 
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
+
+# NVD intermittently returns 503s / slow reads, especially over a large window.
+# Retry transient failures with exponential backoff so one blip doesn't fail the
+# whole run (which would leave the state marker un-advanced and grow the next
+# window even larger).
+REQUEST_MAX_RETRIES = 3
+REQUEST_BACKOFF_SECONDS = 2
 
 # NVD 2.0 caps results at 2000 per page. With an API key the rate limit is
 # 50 requests / 30s; without one it's 5 / 30s. We sleep between pages to stay
@@ -26,15 +34,29 @@ ENRICH_DELAY_SECONDS = 0.34
 
 
 def _request(base_url, params, api_key, timeout=30):
-    """Perform a single GET against the NVD API and return parsed JSON."""
+    """Perform a single GET against the NVD API and return parsed JSON.
+
+    Retries transient failures (HTTP 429/5xx, connection/read timeouts) with
+    exponential backoff before giving up.
+    """
     url = f"{base_url}?{urllib.parse.urlencode(params)}"
     headers = {"User-Agent": "CyberLoopNews/1.0"}
     if api_key:
         headers["apiKey"] = api_key
 
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    for attempt in range(REQUEST_MAX_RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            # Only 429/5xx are worth retrying; 4xx (bad request) would just repeat.
+            if exc.code not in (429, 500, 502, 503, 504) or attempt == REQUEST_MAX_RETRIES - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == REQUEST_MAX_RETRIES - 1:
+                raise
+        time.sleep(REQUEST_BACKOFF_SECONDS * (2**attempt))
 
 
 def fetch_cves_by_pub_date(base_url, api_key, pub_start, pub_end):
