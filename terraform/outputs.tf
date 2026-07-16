@@ -33,6 +33,16 @@ output "analysis_bucket" {
   value       = aws_s3_bucket.analysis.id
 }
 
+output "ranking_function_name" {
+  description = "Name of the deployed ranking-alert Lambda."
+  value       = aws_lambda_function.ranking.function_name
+}
+
+output "ranking_log_group" {
+  description = "CloudWatch log group for the ranking-alert Lambda."
+  value       = aws_cloudwatch_log_group.ranking.name
+}
+
 output "schedule_expression" {
   description = "Active EventBridge schedule."
   value       = aws_cloudwatch_event_rule.schedule.schedule_expression

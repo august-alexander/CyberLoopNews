@@ -65,6 +65,24 @@ variable "analysis_max_per_run" {
   default     = 50
 }
 
+variable "ranking_schedule_expression" {
+  description = "EventBridge Scheduler expression for the ranking alert. Default: 9am/1pm/5pm daily, evaluated in ranking_timezone."
+  type        = string
+  default     = "cron(0 9,13,17 * * ? *)"
+}
+
+variable "ranking_timezone" {
+  description = "IANA timezone the ranking schedule is evaluated in. DST-aware, so the Eastern times hold year-round."
+  type        = string
+  default     = "America/New_York"
+}
+
+variable "ranking_top_n" {
+  description = "How many top CVEs by LoopScore the ranking alert lists per send."
+  type        = number
+  default     = 10
+}
+
 variable "nist_api_key" {
   description = "NIST NVD API key."
   type        = string

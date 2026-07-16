@@ -51,6 +51,18 @@ class Config:
     # Reporter: how many hours of hourly CVE scans the daily report aggregates.
     REPORT_LOOKBACK_HOURS = int(os.getenv("REPORT_LOOKBACK_HOURS", "24"))
 
+    # Ranking alert: thrice-daily (9am/1pm/5pm ET) top-N LoopScore digest emailed
+    # via SNS. It ranks ONLY the CVEs scored since the previous alert, so every
+    # send is fresh with no repeats. The "since last alert" boundary is persisted
+    # as a marker object (RANKING_STATE_KEY) in the analysis bucket; on the very
+    # first run (no marker yet) it looks back RANKING_FIRST_RUN_LOOKBACK_HOURS so
+    # the inaugural alert isn't empty.
+    RANKING_TOP_N = int(os.getenv("RANKING_TOP_N", "10"))
+    RANKING_STATE_KEY = os.getenv("RANKING_STATE_KEY", "ranking-state/last_alert.json")
+    RANKING_FIRST_RUN_LOOKBACK_HOURS = int(
+        os.getenv("RANKING_FIRST_RUN_LOOKBACK_HOURS", "24")
+    )
+
     # Application
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"

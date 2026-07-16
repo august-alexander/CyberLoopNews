@@ -181,3 +181,43 @@ resource "aws_lambda_function" "analyzer" {
 
   tags = local.tags
 }
+
+resource "aws_cloudwatch_log_group" "ranking" {
+  name              = "/aws/lambda/${local.name_prefix}-ranking"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+# Ranking reporter: thrice-daily top-N LoopScore digest. Reads the scored
+# results the analyzer wrote to the analysis bucket, ranks the CVEs scored since
+# the last alert, and emails the digest via SNS. Ships in the same zip as the
+# other Lambdas; only the handler entrypoint differs. Fired by EventBridge
+# Scheduler at 9am/1pm/5pm ET (see scheduler.tf) so the times hold across DST.
+resource "aws_lambda_function" "ranking" {
+  function_name = "${local.name_prefix}-ranking"
+  role          = aws_iam_role.ranking.arn
+  runtime       = "python3.12"
+  handler       = "ranking_handler.lambda_handler"
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      OUTPUT_BUCKET     = aws_s3_bucket.analysis.id # scored results live here
+      OUTPUT_PREFIX     = "analysis/"
+      SNS_TOPIC_ARN     = aws_sns_topic.alerts.arn
+      RANKING_TOP_N     = var.ranking_top_n
+      RANKING_STATE_KEY = "ranking-state/last_alert.json"
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.ranking,
+    aws_cloudwatch_log_group.ranking,
+  ]
+
+  tags = local.tags
+}
