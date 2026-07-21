@@ -83,6 +83,12 @@ variable "ranking_top_n" {
   default     = 10
 }
 
+variable "red_alert_threshold" {
+  description = "LoopScore at/above which the red-alert Lambda emails immediately, one CVE at a time. High on purpose — raise it if alerts get too frequent."
+  type        = number
+  default     = 85
+}
+
 variable "nist_api_key" {
   description = "NIST NVD API key."
   type        = string

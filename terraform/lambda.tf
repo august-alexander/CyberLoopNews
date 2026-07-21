@@ -182,6 +182,44 @@ resource "aws_lambda_function" "analyzer" {
   tags = local.tags
 }
 
+resource "aws_cloudwatch_log_group" "red_alert" {
+  name              = "/aws/lambda/${local.name_prefix}-red-alert"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+# Red alert: triggered by the analyzer's S3 write for each scored CVE (S3
+# notification on the analysis bucket, see s3.tf). Reads that one scored object
+# and, if its LoopScore is at/above the threshold, emails immediately via SNS.
+# Ships in the same zip as the other Lambdas; only the handler entrypoint
+# differs. No schedule — the per-CVE S3 event is the trigger.
+resource "aws_lambda_function" "red_alert" {
+  function_name = "${local.name_prefix}-red-alert"
+  role          = aws_iam_role.red_alert.arn
+  runtime       = "python3.12"
+  handler       = "red_alert_handler.lambda_handler"
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      OUTPUT_BUCKET       = aws_s3_bucket.analysis.id # scored results live here
+      SNS_TOPIC_ARN       = aws_sns_topic.alerts.arn
+      RED_ALERT_THRESHOLD = var.red_alert_threshold
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.red_alert,
+    aws_cloudwatch_log_group.red_alert,
+  ]
+
+  tags = local.tags
+}
+
 resource "aws_cloudwatch_log_group" "ranking" {
   name              = "/aws/lambda/${local.name_prefix}-ranking"
   retention_in_days = 14

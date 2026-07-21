@@ -230,6 +230,49 @@ resource "aws_iam_role_policy" "ranking" {
 }
 
 # ---------------------------------------------------------------------------
+# Red-alert role: read a single scored result from the analysis bucket and
+# publish to SNS. The narrowest role of them all — no Bedrock, no raw bucket, no
+# writes (it keeps no state), no ListBucket (the S3 event hands it the key).
+# ---------------------------------------------------------------------------
+resource "aws_iam_role" "red_alert" {
+  name               = "${local.name_prefix}-red-alert-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+data "aws_iam_policy_document" "red_alert_permissions" {
+  statement {
+    sid = "Logs"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:aws:logs:*:*:*"]
+  }
+
+  # Read the one scored result named in the triggering S3 event.
+  statement {
+    sid       = "S3ReadAnalysis"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.analysis.arn}/*"]
+  }
+
+  # Publish the alert to our SNS topic (email).
+  statement {
+    sid       = "SNSPublish"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "red_alert" {
+  name   = "${local.name_prefix}-red-alert-policy"
+  role   = aws_iam_role.red_alert.id
+  policy = data.aws_iam_policy_document.red_alert_permissions.json
+}
+
+# ---------------------------------------------------------------------------
 # EventBridge Scheduler execution role: lets the ranking schedule invoke the
 # ranking Lambda. Scheduler assumes this role (not a resource-based lambda
 # permission like the cloudwatch_event_rule targets use).

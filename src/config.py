@@ -63,6 +63,12 @@ class Config:
         os.getenv("RANKING_FIRST_RUN_LOOKBACK_HOURS", "24")
     )
 
+    # Red alert: fired by the analyzer's S3 write for each scored CVE. A LoopScore
+    # at or above this threshold is rare/critical enough to email immediately,
+    # one CVE at a time (see red_alert_handler.py). No schedule or state — the
+    # per-CVE S3 event is the trigger and the dedup.
+    RED_ALERT_THRESHOLD = int(os.getenv("RED_ALERT_THRESHOLD", "85"))
+
     # Application
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
     DEBUG = os.getenv("DEBUG", "False").lower() == "true"

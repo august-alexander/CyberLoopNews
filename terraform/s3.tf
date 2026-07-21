@@ -20,3 +20,28 @@ resource "aws_s3_bucket_public_access_block" "analysis" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
+# Red-alert trigger: every time the analyzer writes a scored result
+# (analysis/<id>.json), fire the red-alert Lambda on that object. The prefix +
+# suffix filter keeps it to scored results only (never the ranking-state marker
+# or any other key). This is the whole trigger — no schedule, one event per CVE.
+resource "aws_lambda_permission" "allow_s3_red_alert" {
+  statement_id  = "AllowS3InvokeRedAlert"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.red_alert.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = aws_s3_bucket.analysis.arn
+}
+
+resource "aws_s3_bucket_notification" "analysis" {
+  bucket = aws_s3_bucket.analysis.id
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.red_alert.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = "analysis/"
+    filter_suffix       = ".json"
+  }
+
+  depends_on = [aws_lambda_permission.allow_s3_red_alert]
+}
