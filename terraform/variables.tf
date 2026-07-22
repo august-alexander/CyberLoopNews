@@ -35,6 +35,17 @@ variable "s3_bucket_name" {
   default     = "cyberloopnews-cve-data"
 }
 
+# Custom domain the dashboard is served on. Set per environment in
+# environments/<env>/terraform.tfvars. Empty (the default) = no custom domain,
+# so the site is reached via the auto-assigned *.cloudfront.net URL. When set,
+# Terraform provisions an ACM cert, its DNS validation, and the Route 53 alias
+# records for the apex + www — all automatically (DNS is in Route 53).
+variable "dashboard_domain" {
+  description = "Apex custom domain for the dashboard (e.g. cyberloops.net). Empty = use the default *.cloudfront.net URL."
+  type        = string
+  default     = ""
+}
+
 variable "output_bucket_name" {
   description = "S3 bucket for per-CVE LoopScore analysis outputs. Created by this stack; set per environment (dev/main) so the branches never share a bucket."
   type        = string

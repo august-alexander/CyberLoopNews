@@ -45,10 +45,14 @@ resource "aws_cloudfront_origin_access_control" "site" {
 
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
+  is_ipv6_enabled     = true # serve IPv6 clients; required for the AAAA alias records.
   default_root_object = "index.html"
   comment             = "${local.name_prefix} dashboard"
   price_class         = "PriceClass_100" # North America + Europe edges only — cheapest tier.
   tags                = local.tags
+
+  # Custom domain(s) — empty unless var.dashboard_domain is set (see dns.tf).
+  aliases = local.domain_aliases
 
   origin {
     domain_name              = aws_s3_bucket.site.bucket_regional_domain_name
@@ -71,11 +75,14 @@ resource "aws_cloudfront_distribution" "site" {
     }
   }
 
-  # No custom domain yet, so use the free CloudFront cert. This gives HTTPS on
-  # the auto-assigned *.cloudfront.net domain; swap in an ACM cert (us-east-1)
-  # + aliases when a real domain is attached.
+  # With a custom domain: use the validated ACM cert (SNI). Without one: fall
+  # back to the free CloudFront cert on the *.cloudfront.net domain. The nulls
+  # omit the args that don't apply to each case.
   viewer_certificate {
-    cloudfront_default_certificate = true
+    cloudfront_default_certificate = local.use_custom_domain ? null : true
+    acm_certificate_arn            = local.use_custom_domain ? aws_acm_certificate_validation.site[0].certificate_arn : null
+    ssl_support_method             = local.use_custom_domain ? "sni-only" : null
+    minimum_protocol_version       = local.use_custom_domain ? "TLSv1.2_2021" : null
   }
 }
 

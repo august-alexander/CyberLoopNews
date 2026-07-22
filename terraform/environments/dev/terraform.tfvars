@@ -21,3 +21,9 @@ state_key          = "state/last_fetch.json"
 
 schedule_expression = "cron(0 * * * ? *)" # hourly at :00 (small delta per fetch)
 lookback_hours      = 24
+
+# Dashboard custom domain. Points cyberloops.net (+ www) at the dev site for
+# now, since main isn't a site yet — move this line to environments/main when
+# the prod site goes live. Empty string here would fall back to the
+# *.cloudfront.net URL.
+dashboard_domain = "cyberloops.net"
