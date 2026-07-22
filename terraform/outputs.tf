@@ -52,3 +52,21 @@ output "log_group" {
   description = "CloudWatch log group for the Lambda."
   value       = aws_cloudwatch_log_group.lambda.name
 }
+
+output "site_bucket" {
+  description = "Private S3 bucket holding the static dashboard files."
+  value       = aws_s3_bucket.site.id
+}
+
+output "dashboard_url" {
+  description = "HTTPS URL of the CloudFront-hosted dashboard."
+  value       = "https://${aws_cloudfront_distribution.site.domain_name}"
+}
+
+# After editing web/index.html and re-applying, the new file is in S3 but
+# CloudFront may still serve the cached copy at the edge. Force a refresh with:
+#   aws cloudfront create-invalidation --distribution-id <id> --paths "/*"
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID (use for cache invalidations after a page edit)."
+  value       = aws_cloudfront_distribution.site.id
+}
