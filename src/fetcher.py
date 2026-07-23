@@ -1,10 +1,13 @@
 """NIST NVD CVE fetcher — standard library only (Lambda-friendly, no deps)."""
 
 import json
+import logging
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 # NVD intermittently returns 503s / slow reads, especially over a large window.
 # Retry transient failures with exponential backoff so one blip doesn't fail the
@@ -27,10 +30,14 @@ NVD_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.000"
 # CVE.org (MITRE) record API. NVD's `configurations` (CPE) data is only filled
 # in during NVD's own analysis, so brand-new CVEs carry no product/OS info
 # there. The CVE.org record, however, exposes the CNA's `affected[]` list at
-# publish time — vendor/product/versions are populated immediately. We enrich
-# each fetched CVE with that so the report has a signal for fresh CVEs.
+# publish time — vendor/product/versions are populated immediately, so it's the
+# only product signal available for fresh CVEs.
+#
+# NOTE: CVE.org is a SEPARATE upstream from NVD and is only ever called by the
+# enricher Lambda (enrich_handler.py), never during a fetch. Keep it that way —
+# putting this per-CVE loop back in the fetch path is what caused the July 2026
+# ingest outage.
 CVE_ORG_API = "https://cveawg.mitre.org/api/cve/"
-ENRICH_DELAY_SECONDS = 0.34
 
 
 def _request(base_url, params, api_key, timeout=30):
@@ -101,18 +108,35 @@ def fetch_cves_by_pub_date(base_url, api_key, pub_start, pub_end):
 def fetch_cna_affected(cve_id, timeout=15):
     """Return the CNA-supplied affected products for one CVE from CVE.org.
 
-    Reads containers.cna.affected[] and returns a deduped list of
-    {"vendor", "product"} dicts. Best-effort: any network/parse error (or a CVE
-    not yet mirrored by CVE.org) yields []. Placeholder products like "n/a" are
-    dropped so they don't pollute the breakdown.
+    Reads containers.cna.affected[] and returns (products, ok) where products is
+    a deduped list of {"vendor", "product"} dicts. Best-effort: any network/parse
+    error (or a CVE not yet mirrored by CVE.org) yields ([], False). Placeholder
+    products like "n/a" are dropped so they don't pollute the breakdown.
+
+    The `ok` flag exists because "no products" and "the lookup failed" are very
+    different states, and collapsing them into a bare [] is what made a CVE.org
+    slowdown invisible in CloudWatch for two days. Callers persist a result only
+    when ok is True, so transient failures are retried and never cached.
     """
     url = f"{CVE_ORG_API}{urllib.parse.quote(cve_id)}"
     req = urllib.request.Request(url, headers={"User-Agent": "CyberLoopNews/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             record = json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return []
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            # CVE.org has no record for this ID (not mirrored, or rejected).
+            # That's a definitive answer, not a failure: report it as a
+            # successful lookup with no products so the caller marks the CVE
+            # done. Treating it as a failure would leave it permanently pending
+            # and re-requested on every single enricher run, forever.
+            logger.info("CVE.org has no record for %s", cve_id)
+            return [], True
+        logger.warning("CVE.org lookup failed for %s: %s", cve_id, exc)
+        return [], False
+    except Exception as exc:
+        logger.warning("CVE.org lookup failed for %s: %s", cve_id, exc)
+        return [], False
 
     affected = record.get("containers", {}).get("cna", {}).get("affected", []) or []
     products = []
@@ -127,26 +151,7 @@ def fetch_cna_affected(cve_id, timeout=15):
             continue
         seen.add(key)
         products.append({"vendor": vendor, "product": product})
-    return products
-
-
-def enrich_with_cna_affected(vulnerabilities):
-    """Attach CNA-supplied affected products to each vuln, in place.
-
-    Sets cve["cnaAffected"] = [{"vendor", "product"}, ...]. One CVE.org request
-    per CVE, throttled by ENRICH_DELAY_SECONDS. For the daily delta this is a
-    modest number of requests; if the fetch window is ever very large, budget
-    Lambda timeout accordingly.
-    """
-    last = len(vulnerabilities) - 1
-    for i, vuln in enumerate(vulnerabilities):
-        cve = vuln.get("cve")
-        if not cve or "id" not in cve:
-            continue
-        cve["cnaAffected"] = fetch_cna_affected(cve["id"])
-        if i < last:
-            time.sleep(ENRICH_DELAY_SECONDS)
-    return vulnerabilities
+    return products, True
 
 
 def extract_cve_ids(vulnerabilities):

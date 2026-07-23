@@ -17,17 +17,57 @@ resource "aws_lambda_function" "fetcher" {
 
   environment {
     variables = {
-      NIST_API_KEY      = var.nist_api_key
-      NIST_API_BASE_URL = var.nist_api_base_url
-      S3_BUCKET         = var.s3_bucket_name
-      STATE_KEY         = var.state_key
-      LOOKBACK_HOURS    = var.lookback_hours
+      NIST_API_KEY        = var.nist_api_key
+      NIST_API_BASE_URL   = var.nist_api_base_url
+      S3_BUCKET           = var.s3_bucket_name
+      STATE_KEY           = var.state_key
+      LOOKBACK_HOURS      = var.lookback_hours
+      FETCH_WINDOW_HOURS  = var.fetch_window_hours
+      MAX_WINDOWS_PER_RUN = var.max_windows_per_run
     }
   }
 
   depends_on = [
     aws_iam_role_policy.lambda,
     aws_cloudwatch_log_group.lambda,
+  ]
+
+  tags = local.tags
+}
+
+# Enricher: fills in CNA-supplied vendor/product data (from CVE.org) on the raw
+# scans the fetcher wrote. Split out of the fetcher deliberately — see the module
+# docstring in enrich_handler.py. Ships in the same zip; only the handler
+# entrypoint differs. Reuses the fetcher IAM role: it needs exactly the same S3
+# get/put/list on the data bucket, and no SNS.
+resource "aws_cloudwatch_log_group" "enricher" {
+  name              = "/aws/lambda/${local.name_prefix}-enricher"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+resource "aws_lambda_function" "enricher" {
+  function_name = "${local.name_prefix}-enricher"
+  role          = aws_iam_role.lambda.arn
+  runtime       = "python3.12"
+  handler       = "enrich_handler.lambda_handler"
+  timeout       = var.enrich_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      S3_BUCKET                = var.s3_bucket_name
+      ENRICH_MAX_SCANS_PER_RUN = var.enrich_max_scans_per_run
+      ENRICH_RESERVE_SECONDS   = var.enrich_reserve_seconds
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.lambda,
+    aws_cloudwatch_log_group.enricher,
   ]
 
   tags = local.tags

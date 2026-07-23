@@ -14,6 +14,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 import boto3
+from botocore.exceptions import ClientError
 
 # Same packaging note as the fetcher: modules sit flat at the zip root in Lambda,
 # but under src/ locally.
@@ -110,16 +111,35 @@ def _cvss(cve):
     return None, "UNKNOWN"
 
 
-def _affected_products(cve):
+def _load_cna_products(s3, bucket, cve_ids):
+    """Return {cve_id: [{"vendor", "product"}, ...]} from the cna/ keyspace.
+
+    The enricher Lambda writes one cna/<cve-id>.json per CVE from CVE.org, on
+    its own schedule. Missing objects are normal and expected — a CVE fetched
+    minutes ago may not be enriched yet, or CVE.org may not mirror it at all —
+    so this is a left join, never a hard dependency. The report goes out with
+    whatever product data exists at the time.
+    """
+    products = {}
+    for cve_id in cve_ids:
+        try:
+            obj = s3.get_object(Bucket=bucket, Key=f"{Config.CNA_PREFIX}{cve_id}.json")
+        except ClientError:
+            continue
+        products[cve_id] = json.loads(obj["Body"].read()).get("products", [])
+    return products
+
+
+def _affected_products(cve, cna_products):
     """Return the set of 'vendor/product' strings a CVE affects.
 
-    Uses the CNA-supplied affected products the fetcher attached as
-    cve["cnaAffected"]. Unlike NVD's `configurations` (CPE) data — which is
-    empty until NVD analyzes a CVE — these are populated at publish time, so
-    brand-new CVEs still get a product breakdown.
+    Uses the CNA-supplied affected products from the cna/ keyspace. Unlike NVD's
+    `configurations` (CPE) data — which is empty until NVD analyzes a CVE —
+    these are populated at publish time, so brand-new CVEs still get a product
+    breakdown.
     """
     products = set()
-    for entry in cve.get("cnaAffected", []):
+    for entry in cna_products.get(cve.get("id"), []):
         vendor = entry.get("vendor", "").strip()
         product = entry.get("product", "").strip()
         if not product:
@@ -128,7 +148,7 @@ def _affected_products(cve):
     return products
 
 
-def _build_report(payload):
+def _build_report(payload, cna_products):
     """Build the report body: new count, top 5 by severity, and product breakdown."""
     cves = [v["cve"] for v in payload.get("vulnerabilities", []) if "cve" in v]
 
@@ -146,7 +166,7 @@ def _build_report(payload):
     # once for each), most-affected first.
     product_counts = Counter()
     for cve in cves:
-        for product in _affected_products(cve):
+        for product in _affected_products(cve, cna_products):
             product_counts[product] += 1
 
     lines = [
@@ -207,7 +227,11 @@ def lambda_handler(event, context):
         return {"reported": False}
 
     cve_payload = _combine_scans(s3, Config.S3_BUCKET, cve_keys)
-    body = _build_report(cve_payload)
+    cve_ids = [
+        v["cve"]["id"] for v in cve_payload.get("vulnerabilities", []) if "cve" in v
+    ]
+    cna_products = _load_cna_products(s3, Config.S3_BUCKET, cve_ids)
+    body = _build_report(cve_payload, cna_products)
 
     # Merge in the latest EDGAR dumps if the fetchers have run. Best-effort:
     # the CVE report still goes out even if no EDGAR data exists yet.

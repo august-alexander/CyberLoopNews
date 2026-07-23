@@ -2,9 +2,14 @@
 
 Single responsibility — this Lambda only fetches and saves. It writes the raw
 payload to raw/<timestamp>/cves.json and advances the last-fetch state marker.
-It does NOT alert or report; the report Lambda owns all outbound email.
+It does NOT alert or report (the report Lambda owns outbound email), and it does
+NOT enrich (the enricher Lambda owns the CVE.org vendor/product lookup).
 
-Triggered daily by EventBridge.
+Work per invocation is bounded by construction: at most MAX_WINDOWS_PER_RUN
+windows of FETCH_WINDOW_HOURS each, so no upstream outage can grow the cost of a
+single run. See lambda_handler() for why that matters.
+
+Triggered hourly by EventBridge.
 """
 
 import json
@@ -16,10 +21,10 @@ import boto3
 # local imports (from the src package).
 try:
     from config import Config
-    from fetcher import enrich_with_cna_affected, fetch_cves_by_pub_date
+    from fetcher import fetch_cves_by_pub_date
 except ImportError:  # pragma: no cover - local/dev path
     from src.config import Config
-    from src.fetcher import enrich_with_cna_affected, fetch_cves_by_pub_date
+    from src.fetcher import fetch_cves_by_pub_date
 
 # Timestamp convention for our own S3 keys + state file (matches test_nvd.py).
 KEY_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
@@ -80,6 +85,18 @@ def _store_raw(s3, bucket, now, total_results, vulnerabilities):
 
 
 def lambda_handler(event, context):
+    """Advance the ingest by up to MAX_WINDOWS_PER_RUN fixed-size windows.
+
+    Each step covers exactly FETCH_WINDOW_HOURS and is committed independently:
+    fetch -> write raw -> advance the state marker. That fixed size is the whole
+    point. The previous version fetched `last_success -> now`, so any failure
+    widened the next attempt, which made the retry more expensive than the thing
+    that had just failed — a two-day outage in July 2026 wedged the fetcher
+    permanently that way. With a fixed step, a failure costs the same to retry
+    no matter how long we have been down: an outage makes us fall BEHIND, but it
+    can never make a single invocation bigger. Backlog is drained a few windows
+    at a time instead of attempted in one impossible gulp.
+    """
     Config.validate()
 
     s3 = boto3.client("s3", region_name=Config.AWS_REGION)
@@ -95,29 +112,48 @@ def lambda_handler(event, context):
         window_start = now - timedelta(hours=Config.LOOKBACK_HOURS)
         cumulative = 0
 
-    total_results, vulnerabilities = fetch_cves_by_pub_date(
-        Config.NIST_API_BASE_URL, Config.NIST_API_KEY, window_start, now
-    )
+    step = timedelta(hours=Config.FETCH_WINDOW_HOURS)
+    windows = []
 
-    # Enrich with CNA-supplied affected products (vendor/product) from CVE.org.
-    # NVD's CPE `configurations` are empty until NVD analyzes a CVE, so this is
-    # the only product signal available for brand-new CVEs.
-    enrich_with_cna_affected(vulnerabilities)
+    for _ in range(Config.MAX_WINDOWS_PER_RUN):
+        if window_start >= now:
+            break
+        window_end = min(window_start + step, now)
 
-    result = {
-        "new_cve_count": total_results,
-        "window_start": window_start.isoformat(),
-        "window_end": now.isoformat(),
-        "raw_key": None,
-    }
-
-    if total_results > 0:
-        result["raw_key"] = _store_raw(
-            s3, Config.S3_BUCKET, now, total_results, vulnerabilities
+        total_results, vulnerabilities = fetch_cves_by_pub_date(
+            Config.NIST_API_BASE_URL, Config.NIST_API_KEY, window_start, window_end
         )
 
-    cumulative += total_results
-    _save_state(s3, Config.S3_BUCKET, Config.STATE_KEY, now, total_results, cumulative)
+        # Commit BEFORE anything optional runs. The raw NVD payload is complete
+        # and useful on its own; product enrichment is a separate concern and
+        # now lives in its own Lambda (enrich_handler.py) precisely so it can
+        # never again stand between a successful fetch and its durable write.
+        raw_key = None
+        if total_results > 0:
+            raw_key = _store_raw(
+                s3, Config.S3_BUCKET, window_end, total_results, vulnerabilities
+            )
 
+        cumulative += total_results
+        _save_state(
+            s3, Config.S3_BUCKET, Config.STATE_KEY, window_end, total_results, cumulative
+        )
+
+        windows.append(
+            {
+                "new_cve_count": total_results,
+                "window_start": window_start.isoformat(),
+                "window_end": window_end.isoformat(),
+                "raw_key": raw_key,
+            }
+        )
+        window_start = window_end
+
+    result = {
+        "windows_processed": len(windows),
+        "new_cve_count": sum(w["new_cve_count"] for w in windows),
+        "caught_up": window_start >= now,
+        "windows": windows,
+    }
     print(json.dumps(result))
     return result

@@ -162,6 +162,42 @@ variable "lookback_hours" {
   default     = 24
 }
 
+variable "fetch_window_hours" {
+  description = "Size of a single fetch window. Fixed per step so an outage can never grow the cost of one invocation."
+  type        = number
+  default     = 1
+}
+
+variable "max_windows_per_run" {
+  description = "Max windows one fetcher invocation will advance. >1 lets a backlog drain without unbounding any single run."
+  type        = number
+  default     = 3
+}
+
+variable "enrich_schedule_expression" {
+  description = "EventBridge schedule for the enricher. Default: hourly at :20, after the fetcher (:00) and analyzer (:10)."
+  type        = string
+  default     = "cron(20 * * * ? *)"
+}
+
+variable "enrich_timeout" {
+  description = "Enricher Lambda timeout in seconds. It makes one CVE.org call per CVE, bounded internally by a wall-clock budget."
+  type        = number
+  default     = 600
+}
+
+variable "enrich_max_scans_per_run" {
+  description = "Max raw scans (newest first) the enricher inspects per run."
+  type        = number
+  default     = 12
+}
+
+variable "enrich_reserve_seconds" {
+  description = "Seconds of Lambda time the enricher holds back so partial progress is always written to S3."
+  type        = number
+  default     = 30
+}
+
 variable "state_key" {
   description = "S3 key for the last-fetch state file."
   type        = string

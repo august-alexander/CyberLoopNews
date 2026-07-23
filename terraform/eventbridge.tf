@@ -19,6 +19,31 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.schedule.arn
 }
 
+# Enricher runs on its own schedule, offset from the fetcher so the newest raw
+# scan is already in S3. It is intentionally NOT chained to the fetcher: if the
+# enricher is failing (CVE.org down, slow, rate-limiting), ingest must keep
+# running regardless. Independent schedules are what make that true.
+resource "aws_cloudwatch_event_rule" "enrich_schedule" {
+  name                = "${local.name_prefix}-enricher-schedule"
+  description         = "Trigger the CVE.org vendor/product enricher on a schedule."
+  schedule_expression = var.enrich_schedule_expression
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "enricher" {
+  rule      = aws_cloudwatch_event_rule.enrich_schedule.name
+  target_id = "${local.name_prefix}-enricher"
+  arn       = aws_lambda_function.enricher.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_enricher" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.enricher.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.enrich_schedule.arn
+}
+
 # EDGAR fetcher runs on its own schedule, between the CVE fetcher and the
 # reporter, so both raw dumps are in S3 before the reporter reads them.
 resource "aws_cloudwatch_event_rule" "edgar_schedule" {

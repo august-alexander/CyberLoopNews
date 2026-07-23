@@ -36,6 +36,25 @@ class Config:
     # On the very first run (no state file yet) look back this many hours.
     LOOKBACK_HOURS = int(os.getenv("LOOKBACK_HOURS", "24"))
 
+    # Fetcher window sizing. Each invocation advances the ingest by at most
+    # MAX_WINDOWS_PER_RUN steps of FETCH_WINDOW_HOURS each, so the cost of one
+    # run is fixed no matter how far behind we are. Raising MAX_WINDOWS_PER_RUN
+    # drains a backlog faster; keep the product of the two comfortably inside
+    # the Lambda timeout.
+    FETCH_WINDOW_HOURS = int(os.getenv("FETCH_WINDOW_HOURS", "1"))
+    MAX_WINDOWS_PER_RUN = int(os.getenv("MAX_WINDOWS_PER_RUN", "3"))
+
+    # Enricher: CVE.org vendor/product lookups over recent raw scans. Bounded by
+    # both a scan count and a wall-clock budget (Lambda time remaining, minus
+    # ENRICH_RESERVE_SECONDS held back so partial progress still gets written).
+    ENRICH_MAX_SCANS_PER_RUN = int(os.getenv("ENRICH_MAX_SCANS_PER_RUN", "12"))
+    ENRICH_RESERVE_SECONDS = int(os.getenv("ENRICH_RESERVE_SECONDS", "30"))
+    # Pacing between CVE.org calls — courtesy to a free third-party API.
+    ENRICH_DELAY_SECONDS = float(os.getenv("ENRICH_DELAY_SECONDS", "0.34"))
+    # Enricher output: cna/<cve-id>.json in the data bucket. Its own keyspace,
+    # so raw/ stays exactly as NVD returned it and nothing read-modify-writes.
+    CNA_PREFIX = os.getenv("CNA_PREFIX", "cna/")
+
     # Analyzer (Bedrock) — scores each CVE and writes analysis/<cve-id>.json to
     # the per-environment analysis bucket (OUTPUT_BUCKET) under this prefix, so
     # outputs are always bound to the branch/env like the rest of the pipeline.
