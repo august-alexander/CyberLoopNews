@@ -27,11 +27,12 @@ resource "aws_s3_bucket_public_access_block" "site" {
 # (CloudFront still caches the old copy at the edge until its TTL expires — see
 # the invalidation note in outputs.tf / the deploy handover.)
 resource "aws_s3_object" "index" {
-  bucket       = aws_s3_bucket.site.id
-  key          = "index.html"
-  source       = "${path.module}/../web/index.html"
-  etag         = filemd5("${path.module}/../web/index.html")
-  content_type = "text/html"
+  bucket        = aws_s3_bucket.site.id
+  key           = "index.html"
+  source        = "${path.module}/../web/index.html"
+  etag          = filemd5("${path.module}/../web/index.html")
+  content_type  = "text/html"
+  cache_control = "max-age=30" # edge caches 30s, then revalidates — deploys go live within 30s, no invalidation needed
 }
 
 # Origin Access Control: lets THIS distribution (and nothing else) read the
