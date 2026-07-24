@@ -100,6 +100,18 @@ variable "red_alert_threshold" {
   default     = 85
 }
 
+variable "dashboard_schedule_expression" {
+  description = "EventBridge schedule for the dashboard data publisher. Default: hourly at :25, after the analyzer (:10) and enricher (:20) so it ranks fresh scores."
+  type        = string
+  default     = "cron(25 * * * ? *)"
+}
+
+variable "dashboard_lookback_hours" {
+  description = "How many hours of scored CVEs the dashboard publisher ranks for its top-N. Fixed window (unlike the alert's delta) so the chart always shows a full top-N."
+  type        = number
+  default     = 24
+}
+
 variable "nist_api_key" {
   description = "NIST NVD API key."
   type        = string

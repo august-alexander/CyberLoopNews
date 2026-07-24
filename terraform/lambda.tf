@@ -299,3 +299,44 @@ resource "aws_lambda_function" "ranking" {
 
   tags = local.tags
 }
+
+resource "aws_cloudwatch_log_group" "dashboard" {
+  name              = "/aws/lambda/${local.name_prefix}-dashboard"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+# Dashboard publisher: ranks the top-N LoopScore CVEs over a fixed lookback and
+# writes the static dashboard's summary JSON (data/top10.json) into the SITE
+# bucket, same-origin with index.html. Ships in the same zip as the other
+# Lambdas; only the handler entrypoint differs. Runs hourly via EventBridge (see
+# eventbridge.tf), a few minutes after the analyzer so it ranks fresh scores.
+resource "aws_lambda_function" "dashboard" {
+  function_name = "${local.name_prefix}-dashboard"
+  role          = aws_iam_role.dashboard.arn
+  runtime       = "python3.12"
+  handler       = "dashboard_handler.lambda_handler"
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      OUTPUT_BUCKET            = aws_s3_bucket.analysis.id # scored results live here
+      OUTPUT_PREFIX            = "analysis/"
+      SITE_BUCKET              = aws_s3_bucket.site.id # the dashboard's JSON lands here
+      DASHBOARD_KEY            = "data/top10.json"
+      DASHBOARD_LOOKBACK_HOURS = var.dashboard_lookback_hours
+      RANKING_TOP_N            = var.ranking_top_n
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.dashboard,
+    aws_cloudwatch_log_group.dashboard,
+  ]
+
+  tags = local.tags
+}

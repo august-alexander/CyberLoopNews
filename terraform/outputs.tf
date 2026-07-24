@@ -43,6 +43,11 @@ output "ranking_log_group" {
   value       = aws_cloudwatch_log_group.ranking.name
 }
 
+output "dashboard_function_name" {
+  description = "Name of the dashboard data-publisher Lambda (writes data/top10.json to the site bucket)."
+  value       = aws_lambda_function.dashboard.function_name
+}
+
 output "schedule_expression" {
   description = "Active EventBridge schedule."
   value       = aws_cloudwatch_event_rule.schedule.schedule_expression

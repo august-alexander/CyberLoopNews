@@ -114,6 +114,29 @@ resource "aws_lambda_permission" "allow_eventbridge_analyzer" {
   source_arn    = aws_cloudwatch_event_rule.analysis_schedule.arn
 }
 
+# Dashboard publisher runs hourly, after the analyzer (:10) and enricher (:20),
+# so it ranks the freshest scores when it rebuilds the site's top-N JSON.
+resource "aws_cloudwatch_event_rule" "dashboard_schedule" {
+  name                = "${local.name_prefix}-dashboard-schedule"
+  description         = "Trigger the dashboard data publisher on a schedule."
+  schedule_expression = var.dashboard_schedule_expression
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "dashboard" {
+  rule      = aws_cloudwatch_event_rule.dashboard_schedule.name
+  target_id = "${local.name_prefix}-dashboard"
+  arn       = aws_lambda_function.dashboard.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_dashboard" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.dashboard.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.dashboard_schedule.arn
+}
+
 # Reporter runs on its own schedule, shortly after the fetcher, so the latest
 # raw dump is already in S3 by the time it reads.
 resource "aws_cloudwatch_event_rule" "report_schedule" {

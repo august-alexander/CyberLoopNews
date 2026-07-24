@@ -82,6 +82,14 @@ class Config:
         os.getenv("RANKING_FIRST_RUN_LOOKBACK_HOURS", "24")
     )
 
+    # Dashboard data publisher: writes the static site's summary JSON (the top-N
+    # LoopScore CVEs the bar chart reads) to the SITE bucket, same-origin with
+    # index.html. Reuses RANKING_TOP_N, but ranks a fixed lookback window (not the
+    # alert's "since last alert" delta) so the chart always shows a full top-N.
+    SITE_BUCKET = os.getenv("SITE_BUCKET")
+    DASHBOARD_KEY = os.getenv("DASHBOARD_KEY", "data/top10.json")
+    DASHBOARD_LOOKBACK_HOURS = int(os.getenv("DASHBOARD_LOOKBACK_HOURS", "24"))
+
     # Red alert: fired by the analyzer's S3 write for each scored CVE. A LoopScore
     # at or above this threshold is rare/critical enough to email immediately,
     # one CVE at a time (see red_alert_handler.py). No schedule or state — the

@@ -273,6 +273,57 @@ resource "aws_iam_role_policy" "red_alert" {
 }
 
 # ---------------------------------------------------------------------------
+# Dashboard publisher role: read the scored results from the analysis bucket and
+# write ONE summary object into the site bucket for the static dashboard. Narrow
+# like the ranking role — no Bedrock, no raw data bucket, no SNS; the only write
+# is scoped to the site bucket's data/ prefix.
+# ---------------------------------------------------------------------------
+resource "aws_iam_role" "dashboard" {
+  name               = "${local.name_prefix}-dashboard-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+data "aws_iam_policy_document" "dashboard_permissions" {
+  statement {
+    sid = "Logs"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:aws:logs:*:*:*"]
+  }
+
+  # Read the per-CVE scored results.
+  statement {
+    sid       = "S3ReadAnalysis"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.analysis.arn}/*"]
+  }
+
+  # List analysis/ to find the objects scored within the lookback window.
+  statement {
+    sid       = "S3ListAnalysis"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.analysis.arn]
+  }
+
+  # Publish the summary JSON — narrow write to the site bucket's data/ prefix only.
+  statement {
+    sid       = "S3WriteSiteData"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.site.arn}/data/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "dashboard" {
+  name   = "${local.name_prefix}-dashboard-policy"
+  role   = aws_iam_role.dashboard.id
+  policy = data.aws_iam_policy_document.dashboard_permissions.json
+}
+
+# ---------------------------------------------------------------------------
 # EventBridge Scheduler execution role: lets the ranking schedule invoke the
 # ranking Lambda. Scheduler assumes this role (not a resource-based lambda
 # permission like the cloudwatch_event_rule targets use).
