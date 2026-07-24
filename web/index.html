@@ -60,14 +60,119 @@
       70%  { box-shadow: 0 0 0 10px rgba(34,197,94,0); }
       100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
     }
+
+    /* --- vulns-per-OS pie --- */
+    .card {
+      margin: 2.5rem auto 0;
+      max-width: 34rem;
+      background: #0f1626;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 1.5rem 1.75rem 1.75rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.75rem;
+      align-items: center;
+      justify-content: center;
+    }
+    .card h2 {
+      flex-basis: 100%;
+      margin: 0;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #9fb0c7;
+      text-align: left;
+    }
+    .pie path {
+      stroke: #0a0f1c;      /* 2px surface gap between slices */
+      stroke-width: 2;
+      transition: opacity 0.15s ease;
+    }
+    .pie:hover path { opacity: 0.4; }
+    .pie path:hover { opacity: 1; }
+    .legend { list-style: none; display: grid; gap: 0.5rem; text-align: left; }
+    .legend li {
+      display: grid;
+      grid-template-columns: 12px 1fr auto;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 0.92rem;
+    }
+    .legend .swatch { width: 12px; height: 12px; border-radius: 3px; }
+    .legend .val { color: #9fb0c7; font-variant-numeric: tabular-nums; }
+    .card .state { flex-basis: 100%; text-align: left; color: #9fb0c7; font-size: 0.9rem; }
   </style>
 </head>
 <body>
   <main>
     <span class="badge">CVE Risk Intelligence</span>
     <h1>Cyber<span class="accent">Loop</span></h1>
-    <p class="sub">LoopScore dashboard is being wired up. This page confirms the hosting pipeline is live — real CVE data lands here next.</p>
+    <p class="sub">LoopScore dashboard is being wired up. First live widget below — fed from data in S3.</p>
+
+    <section class="card">
+      <h2>Vulnerabilities per operating system</h2>
+      <svg class="pie" width="180" height="180" viewBox="0 0 180 180"
+           role="img" aria-label="Pie chart of vulnerabilities per operating system"></svg>
+      <ul class="legend"></ul>
+      <p class="state">Loading…</p>
+    </section>
+
     <span class="pulse"><span class="dot"></span> Pipeline online</span>
   </main>
+
+  <script>
+    // Categorical palette (dark-surface steps), assigned in fixed order.
+    const COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"];
+    const cx = 90, cy = 90, r = 82;
+
+    const polar = (deg) => {
+      const a = (deg - 90) * Math.PI / 180;
+      return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+    };
+    const arc = (start, end) => {
+      const [x0, y0] = polar(start), [x1, y1] = polar(end);
+      const large = end - start > 180 ? 1 : 0;
+      return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1} Z`;
+    };
+
+    fetch("/data/os_vulns.json")
+      .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then((data) => {
+        const entries = Object.entries(data);            // [["Microsoft",64], ...]
+        const total = entries.reduce((s, [, v]) => s + v, 0);
+        const svg = document.querySelector(".pie");
+        const legend = document.querySelector(".legend");
+        let angle = 0;
+
+        entries.forEach(([name, value], i) => {
+          const color = COLORS[i % COLORS.length];
+          const pct = value / total;
+          const end = angle + pct * 360;
+
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", arc(angle, end));
+          path.setAttribute("fill", color);
+          const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+          title.textContent = `${name}: ${value} (${Math.round(pct * 100)}%)`;
+          path.appendChild(title);
+          svg.appendChild(path);
+          angle = end;
+
+          legend.insertAdjacentHTML("beforeend", `
+            <li>
+              <span class="swatch" style="background:${color}"></span>
+              <span>${name}</span>
+              <span class="val">${value} · ${Math.round(pct * 100)}%</span>
+            </li>`);
+        });
+
+        document.querySelector(".state").remove();
+      })
+      .catch((err) => {
+        document.querySelector(".state").textContent = "Could not load data (" + err.message + ")";
+      });
+  </script>
 </body>
 </html>
