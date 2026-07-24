@@ -61,48 +61,38 @@
       100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
     }
 
-    /* --- vulns-per-OS pie --- */
+    /* --- top-10 LoopScore bar chart --- */
     .card {
       margin: 2.5rem auto 0;
-      max-width: 34rem;
+      width: min(44rem, 100%);
       background: #0f1626;
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 16px;
-      padding: 1.5rem 1.75rem 1.75rem;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1.75rem;
-      align-items: center;
-      justify-content: center;
+      padding: 1.5rem 1.5rem 1.25rem;
+      text-align: left;
     }
     .card h2 {
-      flex-basis: 100%;
-      margin: 0;
+      margin: 0 0 0.25rem;
       font-size: 0.75rem;
       font-weight: 600;
       letter-spacing: 0.14em;
       text-transform: uppercase;
       color: #9fb0c7;
-      text-align: left;
     }
-    .pie path {
-      stroke: #0a0f1c;      /* 2px surface gap between slices */
-      stroke-width: 2;
-      transition: opacity 0.15s ease;
-    }
-    .pie:hover path { opacity: 0.4; }
-    .pie path:hover { opacity: 1; }
-    .legend { list-style: none; display: grid; gap: 0.5rem; text-align: left; }
-    .legend li {
-      display: grid;
-      grid-template-columns: 12px 1fr auto;
-      align-items: center;
-      gap: 0.6rem;
-      font-size: 0.92rem;
-    }
-    .legend .swatch { width: 12px; height: 12px; border-radius: 3px; }
-    .legend .val { color: #9fb0c7; font-variant-numeric: tabular-nums; }
-    .card .state { flex-basis: 100%; text-align: left; color: #9fb0c7; font-size: 0.9rem; }
+    .card .caption { margin: 0 0 1rem; font-size: 0.8rem; color: #6b7c96; }
+    .chart { width: 100%; height: auto; display: block; }
+
+    /* recessive chrome */
+    .grid line { stroke: #223049; stroke-width: 1; }
+    .axis-label { fill: #6b7c96; font-size: 11px; }
+    .vendor-label { fill: #9fb0c7; font-size: 12px; }
+    /* marks */
+    .bar { transition: opacity 0.15s ease; }
+    .chart:hover .bar { opacity: 0.45; }
+    .chart .bar:hover { opacity: 1; }
+    .cve-label { fill: #fff; font-size: 10.5px; letter-spacing: 0.02em; pointer-events: none; }
+    .score-label { fill: #e6edf7; font-size: 11px; font-weight: 600; pointer-events: none; }
+    .state { color: #9fb0c7; font-size: 0.9rem; }
   </style>
 </head>
 <body>
@@ -112,10 +102,10 @@
     <p class="sub">LoopScore dashboard is being wired up. First live widget below — fed from data in S3.</p>
 
     <section class="card">
-      <h2>Vulnerabilities per operating system</h2>
-      <svg class="pie" width="180" height="180" viewBox="0 0 180 180"
-           role="img" aria-label="Pie chart of vulnerabilities per operating system"></svg>
-      <ul class="legend"></ul>
+      <h2>Top 10 CVEs by LoopScore</h2>
+      <p class="caption">Highest-scoring CVEs from the latest ranking run · grouped by vendor</p>
+      <svg class="chart" viewBox="0 0 640 380" preserveAspectRatio="xMidYMid meet"
+           role="img" aria-label="Bar chart of the top 10 CVEs by LoopScore, grouped by vendor"></svg>
       <p class="state">Loading…</p>
     </section>
 
@@ -123,50 +113,89 @@
   </main>
 
   <script>
-    // Categorical palette (dark-surface steps), assigned in fixed order.
-    const COLORS = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"];
-    const cx = 90, cy = 90, r = 82;
+    // Categorical palette (dark-surface steps). Color follows the VENDOR (identity),
+    // assigned in first-seen order — never by rank, so a data change never repaints.
+    const PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#9085e9", "#008300", "#e66767"];
+    const SVGNS = "http://www.w3.org/2000/svg";
 
-    const polar = (deg) => {
-      const a = (deg - 90) * Math.PI / 180;
-      return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
-    };
-    const arc = (start, end) => {
-      const [x0, y0] = polar(start), [x1, y1] = polar(end);
-      const large = end - start > 180 ? 1 : 0;
-      return `M ${cx} ${cy} L ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1} Z`;
-    };
+    // viewBox geometry
+    const W = 640, H = 380;
+    const plot = { left: 38, right: 632, top: 22, bottom: 320 }; // bottom = baseline
+    const Y_MAX = 100;                                            // LoopScore is 0–100
+    const barGap = 6, groupGap = 24;                              // within-group vs between-vendor
 
-    fetch("/data/os_vulns.json")
+    const el = (name, attrs, parent) => {
+      const n = document.createElementNS(SVGNS, name);
+      for (const k in attrs) n.setAttribute(k, attrs[k]);
+      if (parent) parent.appendChild(n);
+      return n;
+    };
+    const yFor = (score) => plot.bottom - (score / Y_MAX) * (plot.bottom - plot.top);
+
+    fetch("/data/top10.json")
       .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
-      .then((data) => {
-        const entries = Object.entries(data);            // [["Microsoft",64], ...]
-        const total = entries.reduce((s, [, v]) => s + v, 0);
-        const svg = document.querySelector(".pie");
-        const legend = document.querySelector(".legend");
-        let angle = 0;
+      .then((rows) => {
+        const svg = document.querySelector(".chart");
 
-        entries.forEach(([name, value], i) => {
-          const color = COLORS[i % COLORS.length];
-          const pct = value / total;
-          const end = angle + pct * 360;
+        // Group by vendor; order vendors by their top score, CVEs within by score.
+        const groups = {};
+        rows.forEach((d) => (groups[d.vendor] ||= []).push(d));
+        const vendors = Object.keys(groups).sort(
+          (a, b) => Math.max(...groups[b].map((d) => d.score)) - Math.max(...groups[a].map((d) => d.score))
+        );
+        vendors.forEach((v) => groups[v].sort((a, b) => b.score - a.score));
+        const colorOf = Object.fromEntries(vendors.map((v, i) => [v, PALETTE[i % PALETTE.length]]));
 
-          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-          path.setAttribute("d", arc(angle, end));
-          path.setAttribute("fill", color);
-          const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-          title.textContent = `${name}: ${value} (${Math.round(pct * 100)}%)`;
-          path.appendChild(title);
-          svg.appendChild(path);
-          angle = end;
+        // Bar width so N bars + intra/inter-group gaps fill the plot exactly.
+        const N = rows.length, G = vendors.length;
+        const gaps = (N - G) * barGap + (G - 1) * groupGap;
+        const barW = (plot.right - plot.left - gaps) / N;
 
-          legend.insertAdjacentHTML("beforeend", `
-            <li>
-              <span class="swatch" style="background:${color}"></span>
-              <span>${name}</span>
-              <span class="val">${value} · ${Math.round(pct * 100)}%</span>
-            </li>`);
+        // y gridlines + axis labels at 0/25/50/75/100.
+        const grid = el("g", { class: "grid" }, svg);
+        for (let s = 0; s <= Y_MAX; s += 25) {
+          const y = yFor(s);
+          el("line", { x1: plot.left, y1: y, x2: plot.right, y2: y }, grid);
+          el("text", { x: plot.left - 8, y: y + 4, "text-anchor": "end", class: "axis-label" }, grid)
+            .textContent = s;
+        }
+
+        // Bars, grouped by vendor.
+        let x = plot.left;
+        vendors.forEach((vendor) => {
+          const groupStart = x;
+          groups[vendor].forEach((d) => {
+            const y = yFor(d.score), h = plot.bottom - y;
+            const g = el("g", { class: "bar" }, svg);
+
+            el("rect", { x, y, width: barW, height: h, rx: 4, fill: colorOf[vendor] }, g);
+            el("title", {}, g).textContent = `${d.cve} — ${vendor} — LoopScore ${d.score}`;
+
+            // score above the bar
+            el("text", { x: x + barW / 2, y: y - 6, "text-anchor": "middle", class: "score-label" }, g)
+              .textContent = d.score;
+
+            // CVE id inside the bar, reading bottom-to-top
+            const cx = x + barW / 2, cy = plot.bottom - 8;
+            el("text", {
+              x: cx, y: cy, "text-anchor": "start", class: "cve-label",
+              transform: `rotate(-90 ${cx} ${cy})`,
+            }, g).textContent = d.cve;
+
+            x += barW + barGap;
+          });
+          x += groupGap - barGap; // swap the last intra-gap for a group gap
+
+          // vendor label centered under its group
+          const groupEnd = x - groupGap;
+          el("text", {
+            x: (groupStart + groupEnd) / 2, y: plot.bottom + 22,
+            "text-anchor": "middle", class: "vendor-label",
+          }, svg).textContent = vendor;
         });
+
+        // baseline
+        el("line", { x1: plot.left, y1: plot.bottom, x2: plot.right, y2: plot.bottom, stroke: "#38506f" }, svg);
 
         document.querySelector(".state").remove();
       })
