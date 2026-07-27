@@ -363,6 +363,20 @@ resource "aws_lambda_permission" "search_cloudfront" {
   function_url_auth_type = "AWS_IAM"
 }
 
+# AWS's OAC-for-Lambda setup grants the CloudFront principal TWO actions:
+# InvokeFunctionUrl (above) AND InvokeFunction. With only the first, CloudFront's
+# SigV4-signed request is rejected with AccessDeniedException before the function
+# runs (403 at the edge, zero invocations in the log) — both are required. This
+# one carries no function_url_auth_type condition, matching the AWS docs.
+# See: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html
+resource "aws_lambda_permission" "search_cloudfront_invoke" {
+  statement_id  = "AllowCloudFrontInvokeFunction"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.search.function_name
+  principal     = "cloudfront.amazonaws.com"
+  source_arn    = aws_cloudfront_distribution.site.arn
+}
+
 resource "aws_cloudwatch_log_group" "dashboard" {
   name              = "/aws/lambda/${local.name_prefix}-dashboard"
   retention_in_days = 14
