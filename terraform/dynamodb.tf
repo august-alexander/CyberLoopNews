@@ -67,9 +67,13 @@ resource "aws_dynamodb_table" "cves" {
   }
 
   # Filter by vendor, ranked by score: "all Cisco, worst first". vendor_key is
-  # the lowercased PRIMARY vendor (vendors[0]) — the same single-vendor choice
-  # the dashboard's bar chart already makes, so a multi-vendor CVE is filed
-  # under one vendor only.
+  # the lowercased PRIMARY vendor — the same single-vendor choice the dashboard's
+  # bar chart already makes, so a multi-vendor CVE is filed under one vendor only.
+  #
+  # NOTE: it is NOT vendors[0] as-is. analyzer._vendors() formats entries as
+  # "vendor: product", so vendors[0] is a pair; the vendor is parsed out of it in
+  # analysis_handler._vendor_key(). Indexing the raw pair made this GSI
+  # unqueryable by vendor name.
   global_secondary_index {
     name            = "by_vendor"
     hash_key        = "vendor_key"

@@ -96,9 +96,37 @@ UNSCORED_SK = -1
 # (same reason as UNSCORED_SK — a missing key attribute vanishes from by_vendor).
 UNKNOWN_VENDOR = "unknown"
 
+# CNA placeholders that mean "no vendor stated". They're spelled several ways in
+# the affected[] data, so they collapse to one key rather than becoming a
+# browsable "n/a" vendor on the site.
+VENDOR_PLACEHOLDERS = {"", "n/a", "na", "none", "unknown"}
+
 # Wall-clock held back at the end of a backfill run so it can return its resume
 # marker instead of being killed mid-page by the Lambda timeout.
 BACKFILL_RESERVE_SECONDS = 30
+
+
+def _vendor_key(vendors):
+    """Bare lowercased vendor name for the by_vendor index.
+
+    analyzer._vendors() formats each entry as "vendor: product", so the first
+    entry is a PAIR, not a vendor. Indexing on it directly made by_vendor
+    useless — the key was "microsoft: microsoft edge (chromium-based)", so
+    ?vendor=microsoft matched nothing. Take the part before the first colon.
+
+    Parsed out of the string rather than read from a dedicated field on purpose:
+    the backfill rebuilds from existing analysis/*.json, which only ever stored
+    the formatted pair. A new field would leave every already-scored CVE wrong
+    unless it were re-scored through Bedrock.
+
+    _vendors() emits a bare product (no colon) when the CNA gave a product but
+    no vendor. That's indistinguishable from a vendor here, but it doesn't occur
+    in practice, and such an entry had no vendor to file under anyway.
+    """
+    if not vendors:
+        return UNKNOWN_VENDOR
+    vendor = (vendors[0] or "").split(":", 1)[0].strip().lower()
+    return UNKNOWN_VENDOR if vendor in VENDOR_PLACEHOLDERS else vendor
 
 
 def _item(result):
@@ -121,7 +149,7 @@ def _item(result):
     if published[:10]:
         item["published_day"] = published[:10]
     # Primary vendor only, matching the dashboard's single-vendor bar chart.
-    item["vendor_key"] = (vendors[0] or UNKNOWN_VENDOR).lower() if vendors else UNKNOWN_VENDOR
+    item["vendor_key"] = _vendor_key(vendors)
     item["score_sk"] = Decimal(str(score)) if score is not None else Decimal(UNSCORED_SK)
     return item
 
