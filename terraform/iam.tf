@@ -333,6 +333,51 @@ resource "aws_iam_role_policy" "dashboard" {
 }
 
 # ---------------------------------------------------------------------------
+# Search role: the read-only query endpoint behind the site's filter panel. The
+# narrowest data role here — it only ever Queries/GetItems the CVE read-model
+# table, so it has NO S3, NO SNS, NO Bedrock, and no write of any kind. Query is
+# scoped to the table and its two GSIs; there is deliberately no dynamodb:Scan,
+# matching the handler, which refuses any request that would need one.
+# ---------------------------------------------------------------------------
+resource "aws_iam_role" "search" {
+  name               = "${local.name_prefix}-search-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+data "aws_iam_policy_document" "search_permissions" {
+  statement {
+    sid = "Logs"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:aws:logs:*:*:*"]
+  }
+
+  # Read-only access to the CVE table. GetItem targets the base table; Query
+  # targets both the base table and its indexes, so index/* is listed too.
+  statement {
+    sid = "DynamoReadCves"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+    ]
+    resources = [
+      aws_dynamodb_table.cves.arn,
+      "${aws_dynamodb_table.cves.arn}/index/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "search" {
+  name   = "${local.name_prefix}-search-policy"
+  role   = aws_iam_role.search.id
+  policy = data.aws_iam_policy_document.search_permissions.json
+}
+
+# ---------------------------------------------------------------------------
 # EventBridge Scheduler execution role: lets the ranking schedule invoke the
 # ranking Lambda. Scheduler assumes this role (not a resource-based lambda
 # permission like the cloudwatch_event_rule targets use).

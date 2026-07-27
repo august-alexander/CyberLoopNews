@@ -112,6 +112,33 @@ variable "dashboard_lookback_hours" {
   default     = 24
 }
 
+# Search endpoint bounds (search_handler.py). These cap what a public visitor can
+# ask the query Lambda for, so a filter request can't fan out into an expensive
+# read of the CVE table.
+variable "search_default_limit" {
+  description = "Default page size for the search endpoint when the caller doesn't specify one."
+  type        = number
+  default     = 25
+}
+
+variable "search_max_limit" {
+  description = "Hard cap on the search endpoint's page size, regardless of the requested limit."
+  type        = number
+  default     = 100
+}
+
+variable "search_default_days" {
+  description = "Default recent-window size (days) for the search endpoint's browse mode when no vendor/CVE is given."
+  type        = number
+  default     = 7
+}
+
+variable "search_max_days" {
+  description = "Hard cap on the search endpoint's recent-window size. Bounds the number of by_day Queries one request can make."
+  type        = number
+  default     = 30
+}
+
 variable "nist_api_key" {
   description = "NIST NVD API key."
   type        = string
