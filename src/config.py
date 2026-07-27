@@ -67,6 +67,12 @@ class Config:
     # Lambda past its timeout; leftovers are picked up on the next run.
     ANALYSIS_MAX_PER_RUN = int(os.getenv("ANALYSIS_MAX_PER_RUN", "50"))
 
+    # DynamoDB read-model: the analyzer mirrors each scored CVE into this table
+    # so the site can Query it (by day or by vendor, ranked by score) instead of
+    # listing the analysis bucket. Unset means "S3 only" — the mirror write is
+    # skipped, which keeps local runs and any not-yet-migrated env working.
+    CVE_TABLE = os.getenv("CVE_TABLE")
+
     # Reporter: how many hours of hourly CVE scans the daily report aggregates.
     REPORT_LOOKBACK_HOURS = int(os.getenv("REPORT_LOOKBACK_HOURS", "24"))
 

@@ -4,6 +4,10 @@ Writes analysis/<cve-id>.json to the per-environment analysis bucket
 (OUTPUT_BUCKET), so outputs are always bound to the branch. Re-scoring the same
 CVE overwrites its object (idempotent).
 
+Each scored CVE is also mirrored into the CVE_TABLE DynamoDB read-model so the
+site can Query it by day or vendor. That mirror is best-effort and derived: the
+S3 object stays the record of truth, and the table is rebuildable from it.
+
 The handler runs in three modes depending on the event:
   {}  (or an EventBridge scheduled event)  -> BATCH: score every CVE in the
         latest scan that isn't already scored. This is what the hourly schedule
@@ -21,6 +25,8 @@ picked up next run.
 import json
 import logging
 import random
+import time
+from decimal import Decimal
 
 import boto3
 
@@ -81,6 +87,65 @@ def _save(s3, result):
     return key
 
 
+# Sort key for an UNSCORED CVE (no CVSS base score, so loop_score is null).
+# DynamoDB drops an item from an index when its sort key is missing, so these
+# need a real number to stay queryable; -1 sorts below every genuine score.
+UNSCORED_SK = -1
+
+# Filed under this when the CVE names no vendor, so vendor_key is never missing
+# (same reason as UNSCORED_SK — a missing key attribute vanishes from by_vendor).
+UNKNOWN_VENDOR = "unknown"
+
+# Wall-clock held back at the end of a backfill run so it can return its resume
+# marker instead of being killed mid-page by the Lambda timeout.
+BACKFILL_RESERVE_SECONDS = 30
+
+
+def _item(result):
+    """Build the DynamoDB item for one scored result.
+
+    Everything is derived from `result` itself — the table is a projection of
+    the analysis object, never a separate source of truth. Floats go through
+    Decimal because DynamoDB rejects native floats.
+    """
+    published = result.get("published") or ""
+    vendors = result.get("vendors") or []
+    score = result.get("loop_score")
+
+    item = json.loads(json.dumps(result), parse_float=Decimal)
+    # published is ISO-8601 ("2026-07-27T14:03:00.000"), so the date is [:10].
+    # If NVD gave no publish date, the attribute is OMITTED rather than set to
+    # "": DynamoDB rejects an empty string on an index key, which would fail the
+    # whole put. A missing key just drops the item from by_day, which is the
+    # wanted behaviour — it's still in the base table and in by_vendor.
+    if published[:10]:
+        item["published_day"] = published[:10]
+    # Primary vendor only, matching the dashboard's single-vendor bar chart.
+    item["vendor_key"] = (vendors[0] or UNKNOWN_VENDOR).lower() if vendors else UNKNOWN_VENDOR
+    item["score_sk"] = Decimal(str(score)) if score is not None else Decimal(UNSCORED_SK)
+    return item
+
+
+def _mirror(result):
+    """Mirror one scored result into the CVE table, if one is configured.
+
+    Best-effort on purpose: the S3 object is already written and is the record
+    of truth, so a table hiccup must not fail the batch or re-pay Bedrock. Any
+    item lost here comes back with an analyzer backfill.
+    """
+    if not Config.CVE_TABLE:
+        return False
+    try:
+        table = boto3.resource("dynamodb", region_name=Config.AWS_REGION).Table(
+            Config.CVE_TABLE
+        )
+        table.put_item(Item=_item(result))
+        return True
+    except Exception:
+        logger.exception("dynamo mirror failed for %s (S3 copy is intact)", result["cve_id"])
+        return False
+
+
 def _already_scored(s3, cve_id):
     """True if analysis/<cve-id>.json already exists in the output bucket."""
     key = f"{Config.OUTPUT_PREFIX}{cve_id}.json"
@@ -96,11 +161,13 @@ def _score_one(s3, cve):
     result = score_cve(cve)
     key = _save(s3, result)
     logger.info("saved %s -> s3://%s/%s", result["cve_id"], Config.OUTPUT_BUCKET, key)
+    mirrored = _mirror(result)
     return {
         "cve_id": result["cve_id"],
         "loop_score": result["loop_score"],
         "priority": result["priority"],
         "key": key,
+        "mirrored": mirrored,
     }
 
 
@@ -136,8 +203,71 @@ def _run_batch(s3):
     return {"scan_key": scan_key, "total": len(vulns), "scored": scored, "skipped": skipped}
 
 
+def _run_backfill(s3, context, start_after=""):
+    """Mirror already-scored analysis/ objects into the CVE table.
+
+    This is the rebuild path the table's design depends on. It exists because
+    the batch run can never populate the table retroactively: _already_scored()
+    skips any CVE that has an analysis object, so everything scored before the
+    table existed would otherwise never be mirrored.
+
+    Cheap and safe to re-run — it reads existing S3 objects and puts them, with
+    no Bedrock call and no re-scoring, and each put is idempotent on cve_id.
+
+    Bounded by the Lambda's own remaining time (same pattern as the enricher).
+    When the budget runs out it returns `next_start_after`; pass that back in to
+    resume, since S3 lists keys lexicographically.
+    """
+    if not Config.CVE_TABLE:
+        return {"error": "CVE_TABLE not configured; nothing to backfill into"}
+
+    deadline = time.monotonic() + max(
+        0, context.get_remaining_time_in_millis() / 1000.0 - BACKFILL_RESERVE_SECONDS
+    )
+
+    paginator = s3.get_paginator("list_objects_v2")
+    pages = paginator.paginate(
+        Bucket=Config.OUTPUT_BUCKET,
+        Prefix=Config.OUTPUT_PREFIX,
+        StartAfter=start_after or Config.OUTPUT_PREFIX,
+    )
+
+    mirrored = failed = 0
+    last_key = start_after
+
+    for page in pages:
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if not key.endswith(".json"):
+                continue
+            if time.monotonic() >= deadline:
+                logger.info("backfill: budget exhausted, resume after %s", last_key)
+                return {
+                    "mirrored": mirrored,
+                    "failed": failed,
+                    "next_start_after": last_key,
+                    "done": False,
+                }
+
+            body = s3.get_object(Bucket=Config.OUTPUT_BUCKET, Key=key)["Body"].read()
+            if _mirror(json.loads(body)):
+                mirrored += 1
+            else:
+                failed += 1
+            last_key = key
+
+    logger.info("backfill complete: mirrored=%d failed=%d", mirrored, failed)
+    return {"mirrored": mirrored, "failed": failed, "next_start_after": None, "done": True}
+
+
 def lambda_handler(event, context):
     s3 = boto3.client("s3", region_name=Config.AWS_REGION)
+
+    # Rebuild the DynamoDB read-model from the analysis bucket. No Bedrock and
+    # no re-scoring — needed once after the table is created, and any time the
+    # table is dropped or drifts behind S3.
+    if event.get("backfill"):
+        return _run_backfill(s3, context, event.get("start_after", ""))
 
     # Manual: score exactly this CVE.
     if event.get("cve"):

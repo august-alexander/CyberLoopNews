@@ -151,6 +151,15 @@ data "aws_iam_policy_document" "analyzer_permissions" {
     resources = [aws_s3_bucket.analysis.arn]
   }
 
+  # Write the scored CVE into the queryable read-model table. PutItem only —
+  # the analyzer never reads or deletes from it; the table is rebuilt from the
+  # analysis bucket, not from itself.
+  statement {
+    sid       = "DynamoWriteCves"
+    actions   = ["dynamodb:PutItem"]
+    resources = [aws_dynamodb_table.cves.arn]
+  }
+
   # Invoke Claude on Bedrock. Cross-region inference profiles (the "us.*" model
   # IDs) route to the foundation model in several regions, so both the
   # inference-profile ARN and the underlying foundation-model ARNs must be
