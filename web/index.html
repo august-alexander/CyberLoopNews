@@ -90,7 +90,6 @@
     .bar { transition: opacity 0.15s ease; }
     .chart:hover .bar { opacity: 0.45; }
     .chart .bar:hover { opacity: 1; }
-    .cve-label { fill: #fff; font-size: 10.5px; letter-spacing: 0.02em; pointer-events: none; }
     .score-label { fill: #e6edf7; font-size: 11px; font-weight: 600; pointer-events: none; }
     .state { color: #9fb0c7; font-size: 0.9rem; }
   </style>
@@ -175,12 +174,8 @@
             el("text", { x: x + barW / 2, y: y - 6, "text-anchor": "middle", class: "score-label" }, g)
               .textContent = d.score;
 
-            // CVE id inside the bar, reading bottom-to-top
-            const cx = x + barW / 2, cy = plot.bottom - 8;
-            el("text", {
-              x: cx, y: cy, "text-anchor": "start", class: "cve-label",
-              transform: `rotate(-90 ${cx} ${cy})`,
-            }, g).textContent = d.cve;
+            // CVE id shown on hover via the <title> tooltip above — kept off the bar
+            // so a low LoopScore (short bar) doesn't clip or overflow the label.
 
             x += barW + barGap;
           });
