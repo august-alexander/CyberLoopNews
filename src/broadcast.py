@@ -42,16 +42,26 @@ TARGET_WORDS = "600-750"
 # The two daily slots differ in framing, not in content: the 9am show sets up
 # the day, the 1pm show is a mid-day update over an overlapping window. Keyed by
 # the `slot` the handler passes in.
+#
+# Each entry also states what the NEXT edition is, because the sign-off asks the
+# writer to name it. Without that the model invents one — the first live test
+# signed off promising an "evening edition" that does not exist. There are only
+# two editions a day; if a slot is ever added to var.broadcast_slots, add it
+# here and update these hand-offs to match.
 SLOT_FRAMING = {
     "morning": (
-        "This is the MORNING edition. Frame it as setting up the day ahead — "
-        "what landed overnight and what the audience should be watching for."
+        "This is the MORNING edition, which airs at 9am Eastern. Frame it as "
+        "setting up the day ahead — what landed overnight and what the audience "
+        "should be watching for. The next edition is the MIDDAY show at 1pm "
+        "Eastern today; that is the only thing you may point them to."
     ),
     "midday": (
-        "This is the MIDDAY edition. The audience may have heard the morning "
-        "show, which covered an overlapping window. Lead with what is new or "
-        "what has developed; reference recurring items briefly rather than "
-        "re-reading them in full."
+        "This is the MIDDAY edition, which airs at 1pm Eastern. The audience may "
+        "have heard the morning show, which covered an overlapping window. Lead "
+        "with what is new or what has developed; reference recurring items "
+        "briefly rather than re-reading them in full. This is the LAST edition "
+        "of the day — the next one is tomorrow morning at 9am Eastern. There is "
+        "no evening or late edition; never promise one."
     ),
 }
 
@@ -232,28 +242,64 @@ def build_prompt(material):
     return f"{instructions}\n\n{_format_material(material)}"
 
 
+def _extract_text(resp):
+    """Pull the script text out of a Converse reply.
+
+    Deliberately NOT content[0]["text"], which is what analyzer.py does. That
+    works there because the analyzer runs on Haiku, but this runs on Sonnet 5,
+    which has thinking on by default — on a prompt it finds worth reasoning
+    about, block 0 is a reasoning block and block 1 is the text. Confirmed both
+    ways against Bedrock: a trivial prompt came back as a single text block, the
+    full broadcast prompt came back with a reasoning block first. The layout is
+    per-request, so scan for the text block instead of assuming a position.
+    """
+    blocks = resp.get("output", {}).get("message", {}).get("content", []) or []
+    parts = [b["text"] for b in blocks if "text" in b]
+    if not parts:
+        raise ValueError(
+            "Bedrock returned no text block for the broadcast "
+            f"(block types: {[list(b) for b in blocks]})"
+        )
+    return "\n".join(parts).strip()
+
+
 def write_script(material, client=None):
     """Generate one broadcast script from the gathered material (Bedrock Converse).
 
-    Returns the script text, ready to send. Unlike analyzer.assess() this runs
-    at a non-zero temperature: the analyzer needs a repeatable number, whereas
-    two identical scripts on consecutive days would make the show sound like a
-    form letter.
+    Returns the script text, ready to send. Runs on BROADCAST_MODEL_ID (Sonnet),
+    deliberately a stronger model than the analyzer's Haiku: the analyzer makes
+    ~1200 small judgment calls a day where cheap and fast is the right trade,
+    whereas this is two calls a day and the prose quality IS the product.
     """
     client = client or boto3.client("bedrock-runtime", region_name=Config.AWS_REGION)
     resp = client.converse(
-        modelId=Config.BEDROCK_MODEL_ID,
+        modelId=Config.BROADCAST_MODEL_ID,
         system=[{"text": SYSTEM}],
         messages=[{"role": "user", "content": [{"text": build_prompt(material)}]}],
         inferenceConfig={
             # Room for the full script plus headroom; a truncated script is a
             # dead air incident, and the cost of the unused ceiling is zero.
             "maxTokens": 4000,
-            "temperature": 0.7,
+            # NOTE: no `temperature` here, unlike analyzer.assess(). Sonnet 5
+            # rejects sampling parameters outright — Bedrock returns
+            # ValidationException "`temperature` is deprecated for this model".
+            # The analyzer can still pin temperature 0 because it runs on Haiku
+            # 4.5, which accepts it. If this model is ever changed back to a
+            # model that takes sampling params, variety is the reason you might
+            # want one; correctness does not depend on it.
         },
     )
-    text = resp["output"]["message"]["content"][0]["text"].strip()
     logger.info(
         "bedrock usage for %s broadcast: %s", material.get("slot"), resp.get("usage")
     )
-    return text
+
+    # A truncated script is dead air, so surface it loudly rather than emailing
+    # a half-written show. maxTokens above is generous; hitting it means the
+    # length instructions drifted, not that the ceiling is too low.
+    if resp.get("stopReason") == "max_tokens":
+        logger.warning(
+            "%s broadcast hit maxTokens — the script is probably cut off",
+            material.get("slot"),
+        )
+
+    return _extract_text(resp)

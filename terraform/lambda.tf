@@ -372,7 +372,7 @@ resource "aws_lambda_function" "broadcast" {
       EDGAR_PREFIX             = "edgar/"
       EDGAR_6K_PREFIX          = "edgar6k/"
       SNS_TOPIC_ARN            = aws_sns_topic.alerts.arn
-      BEDROCK_MODEL_ID         = var.bedrock_model_id
+      BROADCAST_MODEL_ID       = var.broadcast_model_id
       BROADCAST_LOOKBACK_HOURS = var.broadcast_lookback_hours
       BROADCAST_TOP_N          = var.broadcast_top_n
     }

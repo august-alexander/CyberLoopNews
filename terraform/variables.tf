@@ -121,6 +121,12 @@ variable "broadcast_slots" {
   }
 }
 
+variable "broadcast_model_id" {
+  description = "Bedrock model (inference profile) the broadcast writer uses. Deliberately a stronger model than bedrock_model_id: the analyzer makes ~1200 short scoring calls a day (Haiku is the right trade), while the broadcast is two calls a day whose entire output is prose. Note Sonnet 5 rejects sampling parameters — see the inferenceConfig note in src/broadcast.py before switching models."
+  type        = string
+  default     = "us.anthropic.claude-sonnet-5"
+}
+
 variable "broadcast_lookback_hours" {
   description = "How many hours of scored CVEs the broadcast writer draws on. Fixed window (unlike the ranking alert's delta) because the two slots are only four hours apart; the resulting overlap is handled in the script's framing, not the data."
   type        = number

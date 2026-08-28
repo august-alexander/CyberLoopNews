@@ -100,7 +100,16 @@ class Config:
     # from the scored CVEs plus the EDGAR breach filings, emailed via SNS. Uses a
     # FIXED lookback rather than the ranking alert's "since last alert" marker —
     # the two slots are only four hours apart, so a delta window would leave the
-    # midday show with almost nothing. Reuses BEDROCK_MODEL_ID above.
+    # midday show with almost nothing.
+    #
+    # Its own model, NOT the analyzer's BEDROCK_MODEL_ID: the analyzer runs
+    # Haiku because it makes ~1200 short scoring calls a day, while the
+    # broadcast is two calls a day whose whole output is prose. Note that Sonnet
+    # 5 rejects sampling parameters (`temperature` returns a Bedrock
+    # ValidationException) — see the inferenceConfig note in broadcast.py.
+    BROADCAST_MODEL_ID = os.getenv(
+        "BROADCAST_MODEL_ID", "us.anthropic.claude-sonnet-5"
+    )
     BROADCAST_LOOKBACK_HOURS = int(os.getenv("BROADCAST_LOOKBACK_HOURS", "24"))
     BROADCAST_TOP_N = int(os.getenv("BROADCAST_TOP_N", "8"))
 
