@@ -301,6 +301,82 @@ resource "aws_lambda_function" "ranking" {
   tags = local.tags
 }
 
+resource "aws_cloudwatch_log_group" "search" {
+  name              = "/aws/lambda/${local.name_prefix}-search"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+# Search endpoint: the read-only query Lambda behind the site's filter panel. It
+# Queries the CVE read-model table (by vendor or recent-day window, ranked by
+# LoopScore) and returns trimmed JSON. Ships in the same zip as the other
+# Lambdas; only the handler entrypoint differs. No schedule — it's invoked
+# per-request through its Function URL, reached same-origin via CloudFront.
+resource "aws_lambda_function" "search" {
+  function_name = "${local.name_prefix}-search"
+  role          = aws_iam_role.search.arn
+  runtime       = "python3.12"
+  handler       = "search_handler.lambda_handler"
+  timeout       = var.lambda_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      CVE_TABLE            = aws_dynamodb_table.cves.name # the only thing it reads
+      SEARCH_DEFAULT_LIMIT = var.search_default_limit
+      SEARCH_MAX_LIMIT     = var.search_max_limit
+      SEARCH_DEFAULT_DAYS  = var.search_default_days
+      SEARCH_MAX_DAYS      = var.search_max_days
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.search,
+    aws_cloudwatch_log_group.search,
+  ]
+
+  tags = local.tags
+}
+
+# Function URL for the search Lambda. AWS_IAM auth (not NONE): the only caller is
+# CloudFront, which signs the request with SigV4 via its origin access control
+# (see frontend.tf). That keeps the raw *.lambda-url URL un-callable directly, so
+# all traffic goes through the CDN — same-origin, cached, and rate-limitable —
+# rather than letting a visitor hit the Lambda (and the table) unmetered.
+resource "aws_lambda_function_url" "search" {
+  function_name      = aws_lambda_function.search.function_name
+  authorization_type = "AWS_IAM"
+}
+
+# Let CloudFront (and only this distribution) invoke the Function URL. Paired
+# with the AWS_IAM auth above and the OAC in frontend.tf, this is what restricts
+# the endpoint to signed requests from our own CDN.
+resource "aws_lambda_permission" "search_cloudfront" {
+  statement_id           = "AllowCloudFrontInvokeUrl"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.search.function_name
+  principal              = "cloudfront.amazonaws.com"
+  source_arn             = aws_cloudfront_distribution.site.arn
+  function_url_auth_type = "AWS_IAM"
+}
+
+# AWS's OAC-for-Lambda setup grants the CloudFront principal TWO actions:
+# InvokeFunctionUrl (above) AND InvokeFunction. With only the first, CloudFront's
+# SigV4-signed request is rejected with AccessDeniedException before the function
+# runs (403 at the edge, zero invocations in the log) — both are required. This
+# one carries no function_url_auth_type condition, matching the AWS docs.
+# See: https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-lambda.html
+resource "aws_lambda_permission" "search_cloudfront_invoke" {
+  statement_id  = "AllowCloudFrontInvokeFunction"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.search.function_name
+  principal     = "cloudfront.amazonaws.com"
+  source_arn    = aws_cloudfront_distribution.site.arn
+}
+
 resource "aws_cloudwatch_log_group" "dashboard" {
   name              = "/aws/lambda/${local.name_prefix}-dashboard"
   retention_in_days = 14

@@ -73,6 +73,16 @@ class Config:
     # skipped, which keeps local runs and any not-yet-migrated env working.
     CVE_TABLE = os.getenv("CVE_TABLE")
 
+    # Search endpoint: the read-only query Lambda behind the site's filter panel
+    # (search_handler.py). It Queries the CVE_TABLE above by vendor or recent-day
+    # window, so it needs no bucket access. These bound what a visitor can ask
+    # for — page size and how many days back the recent window reaches — so a
+    # public endpoint can't fan out into an expensive read.
+    SEARCH_DEFAULT_LIMIT = int(os.getenv("SEARCH_DEFAULT_LIMIT", "25"))
+    SEARCH_MAX_LIMIT = int(os.getenv("SEARCH_MAX_LIMIT", "100"))
+    SEARCH_DEFAULT_DAYS = int(os.getenv("SEARCH_DEFAULT_DAYS", "7"))
+    SEARCH_MAX_DAYS = int(os.getenv("SEARCH_MAX_DAYS", "30"))
+
     # Reporter: how many hours of hourly CVE scans the daily report aggregates.
     REPORT_LOOKBACK_HOURS = int(os.getenv("REPORT_LOOKBACK_HOURS", "24"))
 

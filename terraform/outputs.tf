@@ -48,6 +48,21 @@ output "dashboard_function_name" {
   value       = aws_lambda_function.dashboard.function_name
 }
 
+output "search_function_name" {
+  description = "Name of the search/query Lambda behind the site's filter panel."
+  value       = aws_lambda_function.search.function_name
+}
+
+output "search_log_group" {
+  description = "CloudWatch log group for the search Lambda."
+  value       = aws_cloudwatch_log_group.search.name
+}
+
+output "search_endpoint" {
+  description = "Same-origin search API (through CloudFront). Try: <url>?days=7 or ?vendor=cisco or ?cve=CVE-2026-1234."
+  value       = "https://${aws_cloudfront_distribution.site.domain_name}/api/search"
+}
+
 output "schedule_expression" {
   description = "Active EventBridge schedule."
   value       = aws_cloudwatch_event_rule.schedule.schedule_expression

@@ -90,9 +90,51 @@
     .bar { transition: opacity 0.15s ease; }
     .chart:hover .bar { opacity: 0.45; }
     .chart .bar:hover { opacity: 1; }
-    .cve-label { fill: #fff; font-size: 10.5px; letter-spacing: 0.02em; pointer-events: none; }
     .score-label { fill: #e6edf7; font-size: 11px; font-weight: 600; pointer-events: none; }
     .state { color: #9fb0c7; font-size: 0.9rem; }
+
+    /* --- search / filter panel --- */
+    .search { width: min(52rem, 100%); }
+    .filters { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.5rem; }
+    .filters input[type="search"] { flex: 1 1 16rem; min-width: 0; }
+    .filters input, .filters select, .filters button {
+      font: inherit; color: #e6edf7; background: #0b1220;
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+      padding: 0.55rem 0.75rem;
+    }
+    .filters input::placeholder { color: #6b7c96; }
+    .filters select { cursor: pointer; }
+    .filters button {
+      cursor: pointer; font-weight: 600; padding-inline: 1.1rem;
+      background: #4f8cff; border-color: #4f8cff; color: #06101f;
+    }
+    .filters button:hover { background: #6ba0ff; }
+    .filters input:focus, .filters select:focus, .filters button:focus-visible {
+      outline: 2px solid #4f8cff; outline-offset: 1px;
+    }
+    .hint { margin: 0 0 1rem; font-size: 0.75rem; color: #6b7c96; }
+    .results-meta { font-size: 0.75rem; color: #9fb0c7; margin-bottom: 0.4rem; }
+
+    /* result rows */
+    .row { border-top: 1px solid rgba(255,255,255,0.06); padding: 0.75rem 0; }
+    .row:first-child { border-top: none; }
+    .row-main { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+    .pill {
+      font-size: 0.78rem; font-weight: 700; min-width: 2.4rem; text-align: center;
+      padding: 0.2rem 0.5rem; border-radius: 999px; border: 1px solid transparent;
+    }
+    /* pill color follows PRIORITY, one source of truth with the analyzer's bands */
+    .pill.p1 { color: #ff9b9b; background: rgba(229,72,77,0.14);  border-color: rgba(229,72,77,0.40); }
+    .pill.p2 { color: #f0b872; background: rgba(217,130,43,0.14); border-color: rgba(217,130,43,0.40); }
+    .pill.p3 { color: #8fbcff; background: rgba(57,135,229,0.14); border-color: rgba(57,135,229,0.40); }
+    .pill.p4, .pill.unscored { color: #9fb0c7; background: rgba(159,176,199,0.12); border-color: rgba(159,176,199,0.30); }
+    .cve { font-weight: 600; color: #e6edf7; text-decoration: none; }
+    .cve:hover { color: #7fb0ff; text-decoration: underline; }
+    .vendor { color: #9fb0c7; }
+    .meta { margin-left: auto; font-size: 0.78rem; color: #6b7c96; white-space: nowrap; }
+    .summary { margin: 0.4rem 0 0; font-size: 0.85rem; color: #9fb0c7; line-height: 1.4; }
+    .empty, .error { color: #9fb0c7; font-size: 0.9rem; padding: 0.5rem 0; }
+    .error { color: #f0a0a0; }
   </style>
 </head>
 <body>
@@ -107,6 +149,29 @@
       <svg class="chart" viewBox="0 0 640 380" preserveAspectRatio="xMidYMid meet"
            role="img" aria-label="Bar chart of the top 10 CVEs by LoopScore, grouped by vendor"></svg>
       <p class="state">Loading…</p>
+    </section>
+
+    <section class="card search">
+      <h2>Search the CVE database</h2>
+      <p class="caption">Filter by vendor, or look up a CVE by ID · ranked by LoopScore, worst first</p>
+      <form class="filters" id="filters">
+        <input id="q" type="search" placeholder="Vendor (e.g. cisco) or CVE-2026-1234" autocomplete="off" />
+        <select id="minScore" aria-label="Minimum LoopScore">
+          <option value="0">Any score</option>
+          <option value="25">P3+ (≥25)</option>
+          <option value="50">P2+ (≥50)</option>
+          <option value="75">P1 only (≥75)</option>
+        </select>
+        <select id="days" aria-label="Recent window">
+          <option value="1">Today</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+        <button type="submit">Search</button>
+      </form>
+      <p class="hint">Leave the box empty to browse the most recent CVEs. The date window applies when you're not searching a specific vendor or CVE.</p>
+      <div class="results" id="results"></div>
     </section>
 
     <span class="pulse"><span class="dot"></span> Pipeline online</span>
@@ -175,12 +240,8 @@
             el("text", { x: x + barW / 2, y: y - 6, "text-anchor": "middle", class: "score-label" }, g)
               .textContent = d.score;
 
-            // CVE id inside the bar, reading bottom-to-top
-            const cx = x + barW / 2, cy = plot.bottom - 8;
-            el("text", {
-              x: cx, y: cy, "text-anchor": "start", class: "cve-label",
-              transform: `rotate(-90 ${cx} ${cy})`,
-            }, g).textContent = d.cve;
+            // CVE id shown on hover via the <title> tooltip above — kept off the bar
+            // so a low LoopScore (short bar) doesn't clip or overflow the label.
 
             x += barW + barGap;
           });
@@ -202,6 +263,86 @@
       .catch((err) => {
         document.querySelector(".state").textContent = "Could not load data (" + err.message + ")";
       });
+  </script>
+
+  <script>
+    // --- CVE search panel: queries the same-origin /api/search endpoint ---
+    // The endpoint answers three shapes (see search_handler.py); which one we ask
+    // for is inferred from the box: a CVE-looking value -> exact lookup, any other
+    // text -> vendor filter, empty -> browse the recent window. min_score/days are
+    // sent where they apply; the backend ignores the ones a given mode doesn't use.
+    const PRIORITY_CLASS = { P1: "p1", P2: "p2", P3: "p3", P4: "p4", UNSCORED: "unscored" };
+    const CVE_RE = /^CVE-\d{4}-\d{4,}$/i;
+    const results = document.getElementById("results");
+    const form = document.getElementById("filters");
+
+    // Escape anything from the API before it touches innerHTML — the summary and
+    // vendor are model/CNA-supplied text, so treat them as untrusted.
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    function buildParams() {
+      const q = document.getElementById("q").value.trim();
+      const minScore = document.getElementById("minScore").value;
+      const days = document.getElementById("days").value;
+      const p = new URLSearchParams();
+      if (CVE_RE.test(q)) {
+        p.set("cve", q.toUpperCase());
+      } else if (q) {
+        p.set("vendor", q.toLowerCase());
+        p.set("min_score", minScore);
+      } else {
+        p.set("days", days);
+        p.set("min_score", minScore);
+      }
+      p.set("limit", "50");
+      return p;
+    }
+
+    function render(data) {
+      const rows = data.results || [];
+      if (!rows.length) {
+        results.innerHTML = '<p class="empty">No CVEs match that filter.</p>';
+        return;
+      }
+      const q = data.query || {};
+      const window = q.days ? ` · last ${q.days} day${q.days === 1 ? "" : "s"}` : "";
+      const meta = `<p class="results-meta">${rows.length} result${rows.length === 1 ? "" : "s"}${window}</p>`;
+      const body = rows.map((r) => {
+        const cls = PRIORITY_CLASS[r.priority] || "unscored";
+        const score = r.loop_score == null ? "—" : r.loop_score;
+        const line = [
+          r.severity ? esc(r.severity) : "",
+          r.cvss == null ? "" : "CVSS " + esc(r.cvss),
+          r.published ? esc(String(r.published).slice(0, 10)) : "",
+        ].filter(Boolean).join(" · ");
+        const cve = esc(r.cve_id);
+        return `<article class="row">
+          <div class="row-main">
+            <span class="pill ${cls}" title="${esc(r.priority || "")}">${esc(score)}</span>
+            <a class="cve" href="https://nvd.nist.gov/vuln/detail/${cve}" target="_blank" rel="noopener noreferrer">${cve}</a>
+            <span class="vendor">${esc(r.vendor)}</span>
+            <span class="meta">${line}</span>
+          </div>
+          ${r.summary ? `<p class="summary">${esc(r.summary)}</p>` : ""}
+        </article>`;
+      }).join("");
+      results.innerHTML = meta + body;
+    }
+
+    async function search() {
+      results.innerHTML = '<p class="empty">Searching…</p>';
+      try {
+        const res = await fetch("/api/search?" + buildParams().toString());
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        render(await res.json());
+      } catch (e) {
+        results.innerHTML = '<p class="error">Search failed (' + esc(e.message) + "). Try again in a moment.</p>";
+      }
+    }
+
+    form.addEventListener("submit", (e) => { e.preventDefault(); search(); });
+    search(); // initial load: browse the recent window
   </script>
 </body>
 </html>
