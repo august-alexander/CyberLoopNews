@@ -22,3 +22,33 @@ resource "aws_scheduler_schedule" "ranking" {
     role_arn = aws_iam_role.scheduler.arn
   }
 }
+
+# Broadcast schedules — one per daily edition, evaluated in ranking_timezone so
+# the Eastern airtimes hold across daylight saving (same reasoning as the
+# ranking schedule above).
+#
+# Each slot gets its own schedule rather than one cron with two hours, because
+# the slot name has to reach the Lambda: the morning and midday editions run on
+# overlapping windows and are distinguished only by their framing. Passing it as
+# target input means the show is told which edition it is instead of inferring
+# it from the clock — no timezone math inside the Lambda, and a manual invoke
+# can ask for either edition at any hour.
+resource "aws_scheduler_schedule" "broadcast" {
+  for_each = var.broadcast_slots
+
+  name       = "${local.name_prefix}-broadcast-${each.key}-schedule"
+  group_name = "default"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  schedule_expression          = "cron(0 ${each.value} * * ? *)"
+  schedule_expression_timezone = var.ranking_timezone
+
+  target {
+    arn      = aws_lambda_function.broadcast.arn
+    role_arn = aws_iam_role.scheduler.arn
+    input    = jsonencode({ slot = each.key })
+  }
+}

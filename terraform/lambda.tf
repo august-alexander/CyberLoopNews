@@ -341,3 +341,47 @@ resource "aws_lambda_function" "dashboard" {
 
   tags = local.tags
 }
+
+# Broadcast writer: merges the scored CVEs with the EDGAR breach filings and has
+# Bedrock write a ready-to-read news script, emailed twice daily. Ships in the
+# same zip as everything else; only the handler entrypoint differs. Gets the
+# longer analyzer-style timeout because a full script is a single large Bedrock
+# call, not the short scoring calls the other Lambdas make.
+resource "aws_cloudwatch_log_group" "broadcast" {
+  name              = "/aws/lambda/${local.name_prefix}-broadcast"
+  retention_in_days = 14
+  tags              = local.tags
+}
+
+resource "aws_lambda_function" "broadcast" {
+  function_name = "${local.name_prefix}-broadcast"
+  role          = aws_iam_role.broadcast.arn
+  runtime       = "python3.12"
+  handler       = "broadcast_handler.lambda_handler"
+  timeout       = var.analysis_timeout
+  memory_size   = var.lambda_memory
+
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  environment {
+    variables = {
+      OUTPUT_BUCKET            = aws_s3_bucket.analysis.id # scored results live here
+      OUTPUT_PREFIX            = "analysis/"
+      S3_BUCKET                = var.s3_bucket_name # EDGAR dumps live here
+      EDGAR_PREFIX             = "edgar/"
+      EDGAR_6K_PREFIX          = "edgar6k/"
+      SNS_TOPIC_ARN            = aws_sns_topic.alerts.arn
+      BEDROCK_MODEL_ID         = var.bedrock_model_id
+      BROADCAST_LOOKBACK_HOURS = var.broadcast_lookback_hours
+      BROADCAST_TOP_N          = var.broadcast_top_n
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.broadcast,
+    aws_cloudwatch_log_group.broadcast,
+  ]
+
+  tags = local.tags
+}

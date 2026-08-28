@@ -333,9 +333,86 @@ resource "aws_iam_role_policy" "dashboard" {
 }
 
 # ---------------------------------------------------------------------------
-# EventBridge Scheduler execution role: lets the ranking schedule invoke the
-# ranking Lambda. Scheduler assumes this role (not a resource-based lambda
-# permission like the cloudwatch_event_rule targets use).
+# Broadcast writer role: read the scored results AND the EDGAR filings, invoke
+# Bedrock to write the script, publish it to SNS. It is the only role that reads
+# both buckets, because the broadcast is the only job that merges the two feeds.
+# Reads are read-only everywhere — the broadcast writes nothing to S3.
+# ---------------------------------------------------------------------------
+resource "aws_iam_role" "broadcast" {
+  name               = "${local.name_prefix}-broadcast-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+data "aws_iam_policy_document" "broadcast_permissions" {
+  statement {
+    sid = "Logs"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
+    resources = ["arn:aws:logs:*:*:*"]
+  }
+
+  # Read the per-CVE scored results, and list analysis/ to find the ones scored
+  # inside the lookback window.
+  statement {
+    sid       = "S3ReadAnalysis"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.analysis.arn}/*"]
+  }
+
+  statement {
+    sid       = "S3ListAnalysis"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.analysis.arn]
+  }
+
+  # Read the EDGAR 8-K/6-K dumps for the breach desk. The data bucket is created
+  # outside this stack (it is referenced by name), so its ARN is built here.
+  statement {
+    sid       = "S3ReadEdgar"
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::${var.s3_bucket_name}/*"]
+  }
+
+  statement {
+    sid       = "S3ListEdgar"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${var.s3_bucket_name}"]
+  }
+
+  # Write the script. Same Anthropic-scoped grant the analyzer uses — see the
+  # note on inference profiles in analyzer_permissions above.
+  statement {
+    sid     = "BedrockInvoke"
+    actions = ["bedrock:InvokeModel"]
+    resources = [
+      "arn:aws:bedrock:*::foundation-model/anthropic.*",
+      "arn:aws:bedrock:*:${data.aws_caller_identity.current.account_id}:inference-profile/*",
+    ]
+  }
+
+  # Email the finished script.
+  statement {
+    sid       = "SNSPublish"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "broadcast" {
+  name   = "${local.name_prefix}-broadcast-policy"
+  role   = aws_iam_role.broadcast.id
+  policy = data.aws_iam_policy_document.broadcast_permissions.json
+}
+
+# ---------------------------------------------------------------------------
+# EventBridge Scheduler execution role: lets the timezone-aware schedules (the
+# ranking digest and the twice-daily broadcast) invoke their Lambdas. Scheduler
+# assumes this role (not a resource-based lambda permission like the
+# cloudwatch_event_rule targets use).
 # ---------------------------------------------------------------------------
 data "aws_iam_policy_document" "scheduler_assume" {
   statement {
@@ -354,10 +431,16 @@ resource "aws_iam_role" "scheduler" {
 }
 
 data "aws_iam_policy_document" "scheduler_permissions" {
+  # Both timezone-aware schedules run through this one role: the ranking digest
+  # and the twice-daily broadcast. They need the identical permission, so a
+  # second role would be duplicate machinery for the same grant.
   statement {
-    sid       = "InvokeRanking"
-    actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.ranking.arn]
+    sid     = "InvokeScheduledLambdas"
+    actions = ["lambda:InvokeFunction"]
+    resources = [
+      aws_lambda_function.ranking.arn,
+      aws_lambda_function.broadcast.arn,
+    ]
   }
 }
 

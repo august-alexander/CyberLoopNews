@@ -96,6 +96,14 @@ class Config:
     DASHBOARD_KEY = os.getenv("DASHBOARD_KEY", "data/top10.json")
     DASHBOARD_LOOKBACK_HOURS = int(os.getenv("DASHBOARD_LOOKBACK_HOURS", "24"))
 
+    # Broadcast script: twice-daily (9am/1pm ET) news script written by Bedrock
+    # from the scored CVEs plus the EDGAR breach filings, emailed via SNS. Uses a
+    # FIXED lookback rather than the ranking alert's "since last alert" marker —
+    # the two slots are only four hours apart, so a delta window would leave the
+    # midday show with almost nothing. Reuses BEDROCK_MODEL_ID above.
+    BROADCAST_LOOKBACK_HOURS = int(os.getenv("BROADCAST_LOOKBACK_HOURS", "24"))
+    BROADCAST_TOP_N = int(os.getenv("BROADCAST_TOP_N", "8"))
+
     # Red alert: fired by the analyzer's S3 write for each scored CVE. A LoopScore
     # at or above this threshold is rare/critical enough to email immediately,
     # one CVE at a time (see red_alert_handler.py). No schedule or state — the

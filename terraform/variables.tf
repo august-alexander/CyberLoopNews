@@ -112,6 +112,27 @@ variable "dashboard_lookback_hours" {
   default     = 24
 }
 
+variable "broadcast_slots" {
+  description = "The daily broadcast editions: slot name -> hour of day (evaluated in ranking_timezone). One EventBridge schedule is created per entry, each passing its own slot name to the Lambda so the show never has to guess which edition it is. The slot names must match SLOT_FRAMING in src/broadcast.py."
+  type        = map(number)
+  default = {
+    morning = 9
+    midday  = 13
+  }
+}
+
+variable "broadcast_lookback_hours" {
+  description = "How many hours of scored CVEs the broadcast writer draws on. Fixed window (unlike the ranking alert's delta) because the two slots are only four hours apart; the resulting overlap is handled in the script's framing, not the data."
+  type        = number
+  default     = 24
+}
+
+variable "broadcast_top_n" {
+  description = "How many top CVEs by LoopScore go on the broadcast deck. Lower than ranking_top_n on purpose — a 4-5 minute read can only cover so many before it stops being a broadcast."
+  type        = number
+  default     = 8
+}
+
 variable "nist_api_key" {
   description = "NIST NVD API key."
   type        = string
