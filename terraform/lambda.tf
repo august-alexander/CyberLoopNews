@@ -212,6 +212,13 @@ resource "aws_lambda_function" "analyzer" {
       BEDROCK_MODEL_ID     = var.bedrock_model_id
       ANALYSIS_MAX_PER_RUN = var.analysis_max_per_run
       CVE_TABLE            = aws_dynamodb_table.cves.name # queryable read-model
+
+      # The rescore sweep calls NVD directly (lastMod window), so the analyzer
+      # needs the API key the fetcher uses — batch/manual modes never do.
+      NIST_API_KEY          = var.nist_api_key
+      RESCORE_LOOKBACK_DAYS = var.rescore_lookback_days
+      RESCORE_INDEX_DAYS    = var.rescore_index_days
+      RESCORE_MAX_PER_RUN   = var.rescore_max_per_run
     }
   }
 

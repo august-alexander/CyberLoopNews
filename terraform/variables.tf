@@ -76,6 +76,30 @@ variable "analysis_max_per_run" {
   default     = 50
 }
 
+variable "rescore_schedule_expression" {
+  description = "EventBridge schedule for the analyzer's UNSCORED rescore sweep. Default: daily at 04:40 UTC, off the hourly pipeline's peak."
+  type        = string
+  default     = "cron(40 4 * * ? *)"
+}
+
+variable "rescore_lookback_days" {
+  description = "How many days of NVD modifications the rescore sweep asks for. NVD caps this at 120; 7 gives a week of overlap so a missed run self-heals."
+  type        = number
+  default     = 7
+}
+
+variable "rescore_index_days" {
+  description = "How far back the rescore sweep looks in our own table for UNSCORED rows. Wider than the NVD window, since a CVE published months ago can be analyzed today."
+  type        = number
+  default     = 180
+}
+
+variable "rescore_max_per_run" {
+  description = "Max CVEs the rescore sweep scores per invocation. Rescoring reuses the stored model judgment, so this is a runtime bound, not a cost one."
+  type        = number
+  default     = 300
+}
+
 variable "ranking_schedule_expression" {
   description = "EventBridge Scheduler expression for the ranking alert. Default: 9am/1pm/5pm daily, evaluated in ranking_timezone."
   type        = string

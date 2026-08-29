@@ -15,27 +15,39 @@ The handler runs in three modes depending on the event:
   {"cve": <nvd cve dict>}                  -> score exactly that CVE (manual)
   {"random": true}                         -> score one random CVE from the
         latest scan (manual smoke test)
+  {"rescore": true, "lookback_days": N}    -> RESCORE SWEEP: find CVEs we hold
+        as UNSCORED that NVD has since given a CVSS base score, and score them.
 
 Already-scored CVEs are skipped in batch mode (checked via HeadObject) so a
 re-run never re-pays Bedrock, and ANALYSIS_MAX_PER_RUN caps how many are scored
 per invocation so a burst can't run past the Lambda timeout — leftovers are
 picked up next run.
+
+That HeadObject skip is also why the rescore sweep has to exist. A CVE published
+before NVD finishes its analysis has no CVSS base score, so score_cve() files it
+as UNSCORED — but it still writes analysis/<id>.json, which makes _already_scored
+true forever after. When NVD later assigns the score, batch mode skips the CVE
+and the UNSCORED verdict is permanent. The sweep is the only path back.
 """
 
 import json
 import logging
 import random
 import time
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import boto3
+from boto3.dynamodb.conditions import Key
 
 try:
     from config import Config
-    from analyzer import score_cve
+    from analyzer import compute_loop_score, score_cve, trim, _priority_for
+    from fetcher import fetch_cves_by_last_mod
 except ImportError:  # pragma: no cover - local/dev path
     from src.config import Config
-    from src.analyzer import score_cve
+    from src.analyzer import compute_loop_score, score_cve, trim, _priority_for
+    from src.fetcher import fetch_cves_by_last_mod
 
 # INFO-level logging so every scored CVE is traceable in CloudWatch. Silence
 # botocore's own INFO chatter so our records stay readable.
@@ -288,8 +300,195 @@ def _run_backfill(s3, context, start_after=""):
     return {"mirrored": mirrored, "failed": failed, "next_start_after": None, "done": True}
 
 
+# NVD rejects a lastMod window wider than 120 days, so the sweep's lookback is
+# clamped to it. A longer backfill has to be run as several invocations.
+NVD_LASTMOD_MAX_DAYS = 120
+
+
+def _utcnow():
+    return datetime.now(timezone.utc)
+
+
+def _unscored_ids(days_back):
+    """The set of cve_ids we currently hold as UNSCORED, from the by_day index.
+
+    Built from DynamoDB rather than by listing the analysis bucket because
+    score_sk == -1 is an exact key condition: each day is one small Query
+    returning ONLY the unscored rows, instead of a GetObject per CVE we hold.
+
+    This set is what keeps the sweep cheap. NVD's lastMod window returns every
+    CVE modified recently — tens of thousands — and the overwhelming majority
+    are ones we either don't hold or already scored. Intersecting in memory
+    against this set means S3 is touched only for genuine candidates.
+    """
+    table = boto3.resource("dynamodb", region_name=Config.AWS_REGION).Table(
+        Config.CVE_TABLE
+    )
+    now = _utcnow()
+    ids = set()
+    for d in range(days_back):
+        day = (now - timedelta(days=d)).strftime("%Y-%m-%d")
+        cond = Key("published_day").eq(day) & Key("score_sk").eq(Decimal(UNSCORED_SK))
+        start_key = None
+        while True:
+            kwargs = {
+                "IndexName": "by_day",
+                "KeyConditionExpression": cond,
+                "ProjectionExpression": "cve_id",
+            }
+            if start_key:
+                kwargs["ExclusiveStartKey"] = start_key
+            resp = table.query(**kwargs)
+            ids.update(it["cve_id"] for it in resp.get("Items", []) if it.get("cve_id"))
+            start_key = resp.get("LastEvaluatedKey")
+            if not start_key:
+                break
+    return ids
+
+
+def _load_analysis(s3, cve_id):
+    """Read back analysis/<cve-id>.json, or None if it isn't there."""
+    key = f"{Config.OUTPUT_PREFIX}{cve_id}.json"
+    try:
+        return json.loads(s3.get_object(Bucket=Config.OUTPUT_BUCKET, Key=key)["Body"].read())
+    except Exception:
+        logger.warning("rescore: could not read %s", key)
+        return None
+
+
+def _rescore(existing, cve):
+    """Recompute an UNSCORED result now that NVD has published a CVSS.
+
+    No Bedrock call: score_cve() only returns UNSCORED when the CVSS was
+    missing, which happens AFTER the model judgment succeeded, so the stored
+    object already carries prevalence and exploitability. Those are properties of
+    the vulnerability, not of the CVSS — the only missing input was the base
+    score. Re-asking the model would change nothing and cost per CVE.
+
+    Returns the updated result, or None if this CVE isn't actually rescorable
+    (still no CVSS upstream, or no stored judgment to reuse).
+    """
+    trimmed = trim(cve)
+    cvss = trimmed.get("score")
+    if cvss is None:
+        return None  # modified for some other reason; still unanalyzed
+
+    prevalence = existing.get("prevalence") or {}
+    exploitability = existing.get("exploitability") or {}
+    p, e = prevalence.get("value"), exploitability.get("value")
+    if p is None or e is None:
+        return None  # nothing to reuse — caller falls back to a full re-score
+
+    loop_score = compute_loop_score(cvss, p, e)
+    result = dict(existing)
+    result.update(
+        cvss=cvss,
+        severity=trimmed.get("severity"),
+        loop_score=loop_score,
+        priority=_priority_for(loop_score),
+        # NVD populates CPE data during the same analysis pass that assigns the
+        # CVSS, so the fresh vendor list is usually better than the one captured
+        # when the CVE was still unanalyzed. Keep the old one if it came back empty.
+        vendors=trimmed.get("vendors") or existing.get("vendors"),
+        rescored_at=_utcnow().isoformat(),
+    )
+    return result
+
+
+def _run_rescore(s3, context, lookback_days=None):
+    """Sweep: score the CVEs we hold as UNSCORED that NVD has since analyzed.
+
+    Driven by NVD's lastMod window rather than per-CVE lookups. A CVE that gains
+    a CVSS base score is MODIFIED at that moment, so one paged query covers every
+    transition in the window — no need to re-request the thousands we hold.
+
+    Rewriting analysis/<id>.json is what carries the new score into the rest of
+    the pipeline: the ranking digest selects on S3 LastModified, and the mirror
+    below flips the table row's score_sk off -1 so the site's search and the
+    dashboard's top-N can finally see it.
+    """
+    if not Config.CVE_TABLE:
+        return {"error": "CVE_TABLE not configured; rescore needs the index"}
+
+    days = lookback_days or Config.RESCORE_LOOKBACK_DAYS
+    days = max(1, min(int(days), NVD_LASTMOD_MAX_DAYS))
+
+    pending = _unscored_ids(Config.RESCORE_INDEX_DAYS)
+    if not pending:
+        logger.info("rescore: nothing held as unscored; done")
+        return {"lookback_days": days, "unscored_held": 0, "rescored": 0}
+
+    now = _utcnow()
+    total, vulns = fetch_cves_by_last_mod(
+        Config.NIST_API_BASE_URL, Config.NIST_API_KEY, now - timedelta(days=days), now
+    )
+    logger.info(
+        "rescore: %d CVEs modified in the last %dd; %d held unscored",
+        total, days, len(pending),
+    )
+
+    deadline = time.monotonic() + max(
+        0, context.get_remaining_time_in_millis() / 1000.0 - BACKFILL_RESERVE_SECONDS
+    )
+
+    rescored = still_unscored = failed = 0
+    for v in vulns:
+        cve = v.get("cve") or {}
+        cve_id = cve.get("id")
+        if cve_id not in pending:
+            continue
+        if rescored >= Config.RESCORE_MAX_PER_RUN or time.monotonic() >= deadline:
+            logger.info("rescore: budget reached; remainder waits for the next run")
+            break
+
+        existing = _load_analysis(s3, cve_id)
+        if existing is None:
+            failed += 1
+            continue
+
+        result = _rescore(existing, cve)
+        if result is None:
+            # No CVSS yet, or no stored judgment to reuse. The second case needs
+            # the model, so fall back to a full score rather than skipping it.
+            if trim(cve).get("score") is None:
+                still_unscored += 1
+                continue
+            logger.info("rescore: %s has no stored judgment; full re-score", cve_id)
+            try:
+                _score_one(s3, cve)
+                rescored += 1
+            except Exception:
+                logger.exception("rescore: full re-score failed for %s", cve_id)
+                failed += 1
+            continue
+
+        _save(s3, result)
+        _mirror(result)
+        logger.info(
+            "rescore: %s UNSCORED -> loop_score=%s priority=%s",
+            cve_id, result["loop_score"], result["priority"],
+        )
+        rescored += 1
+
+    logger.info(
+        "rescore done: rescored=%d still_unscored=%d failed=%d", rescored, still_unscored, failed
+    )
+    return {
+        "lookback_days": days,
+        "modified_in_window": total,
+        "unscored_held": len(pending),
+        "rescored": rescored,
+        "still_unscored": still_unscored,
+        "failed": failed,
+    }
+
+
 def lambda_handler(event, context):
     s3 = boto3.client("s3", region_name=Config.AWS_REGION)
+
+    # Daily sweep: pick up CVEs NVD has scored since we filed them as UNSCORED.
+    if event.get("rescore"):
+        return _run_rescore(s3, context, event.get("lookback_days"))
 
     # Rebuild the DynamoDB read-model from the analysis bucket. No Bedrock and
     # no re-scoring — needed once after the table is created, and any time the

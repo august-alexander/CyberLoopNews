@@ -114,6 +114,42 @@ resource "aws_lambda_permission" "allow_eventbridge_analyzer" {
   source_arn    = aws_cloudwatch_event_rule.analysis_schedule.arn
 }
 
+# Rescore sweep — the SAME analyzer Lambda, invoked once a day with
+# {"rescore": true} instead of the hourly batch event.
+#
+# It exists because the batch run can never revisit a CVE: _already_scored()
+# skips anything with an analysis object, so a CVE filed as UNSCORED (published
+# before NVD assigned a CVSS) keeps that verdict permanently. This sweep asks
+# NVD which CVEs changed recently and rescores the ones we hold as unscored.
+#
+# Daily, not hourly, because NVD analysis lands on the order of days and the
+# sweep's lookback window overlaps a full week — running it more often would
+# re-ask the same question for no new answers.
+resource "aws_cloudwatch_event_rule" "rescore_schedule" {
+  name                = "${local.name_prefix}-analyzer-rescore-schedule"
+  description         = "Trigger the analyzer's UNSCORED rescore sweep daily."
+  schedule_expression = var.rescore_schedule_expression
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "rescore" {
+  rule      = aws_cloudwatch_event_rule.rescore_schedule.name
+  target_id = "${local.name_prefix}-analyzer-rescore"
+  arn       = aws_lambda_function.analyzer.arn
+
+  # What separates this from the hourly batch trigger above: same function,
+  # different event. Without this input the sweep would just be another batch run.
+  input = jsonencode({ rescore = true })
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_rescore" {
+  statement_id  = "AllowEventBridgeInvokeRescore"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.analyzer.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.rescore_schedule.arn
+}
+
 # Dashboard publisher runs hourly, after the analyzer (:10) and enricher (:20),
 # so it ranks the freshest scores when it rebuilds the site's top-N JSON.
 resource "aws_cloudwatch_event_rule" "dashboard_schedule" {

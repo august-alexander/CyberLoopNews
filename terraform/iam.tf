@@ -151,13 +151,26 @@ data "aws_iam_policy_document" "analyzer_permissions" {
     resources = [aws_s3_bucket.analysis.arn]
   }
 
-  # Write the scored CVE into the queryable read-model table. PutItem only —
-  # the analyzer never reads or deletes from it; the table is rebuilt from the
-  # analysis bucket, not from itself.
+  # Write the scored CVE into the queryable read-model table. Still no delete —
+  # the table is rebuilt from the analysis bucket, not mutated in place.
   statement {
     sid       = "DynamoWriteCves"
     actions   = ["dynamodb:PutItem"]
     resources = [aws_dynamodb_table.cves.arn]
+  }
+
+  # Read back the UNSCORED rows for the daily rescore sweep. This is the one
+  # place the analyzer reads the table it otherwise only writes to, and it's a
+  # deliberate exception: score_sk == -1 is an exact key condition on by_day, so
+  # asking the index "which CVEs are still unscored?" is a handful of small
+  # Queries. Deriving the same set from S3 would mean a GetObject per CVE held.
+  #
+  # Query on the index only — no Scan, matching the search role's rule that
+  # nothing in this stack may fan out across the whole table.
+  statement {
+    sid       = "DynamoQueryUnscored"
+    actions   = ["dynamodb:Query"]
+    resources = ["${aws_dynamodb_table.cves.arn}/index/by_day"]
   }
 
   # Invoke Claude on Bedrock. Cross-region inference profiles (the "us.*" model

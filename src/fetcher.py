@@ -105,6 +105,51 @@ def fetch_cves_by_pub_date(base_url, api_key, pub_start, pub_end):
     return total_results, vulnerabilities
 
 
+def fetch_cves_by_last_mod(base_url, api_key, mod_start, mod_end):
+    """Fetch all CVEs *modified* within [mod_start, mod_end].
+
+    The publish-date fetcher above answers "what's new". This answers "what
+    changed", which is a different question and the one the rescore sweep needs:
+    a CVE that NVD finally assigns a CVSS base score to is MODIFIED at that
+    moment, not republished. Its pubStartDate window is long past, so the ingest
+    path can never see the change.
+
+    That property is what makes the sweep cheap — one paged query covers every
+    CVE that gained a score in the window, instead of re-requesting each of the
+    thousands we hold as unscored.
+
+    NVD caps a lastMod window at 120 days and rejects anything wider, so callers
+    must chunk a longer backfill.
+
+    Returns (total_results, vulnerabilities), same shape as the pub-date fetch.
+    """
+    base_params = {
+        "lastModStartDate": mod_start.strftime(NVD_DATE_FORMAT),
+        "lastModEndDate": mod_end.strftime(NVD_DATE_FORMAT),
+        "resultsPerPage": RESULTS_PER_PAGE,
+    }
+
+    vulnerabilities = []
+    start_index = 0
+    total_results = 0
+
+    while True:
+        params = dict(base_params, startIndex=start_index)
+        data = _request(base_url, params, api_key)
+
+        total_results = data.get("totalResults", 0)
+        page = data.get("vulnerabilities", [])
+        vulnerabilities.extend(page)
+
+        start_index += RESULTS_PER_PAGE
+        if start_index >= total_results or not page:
+            break
+
+        time.sleep(PAGE_DELAY_SECONDS)
+
+    return total_results, vulnerabilities
+
+
 def fetch_cna_affected(cve_id, timeout=15):
     """Return the CNA-supplied affected products for one CVE from CVE.org.
 

@@ -67,6 +67,19 @@ class Config:
     # Lambda past its timeout; leftovers are picked up on the next run.
     ANALYSIS_MAX_PER_RUN = int(os.getenv("ANALYSIS_MAX_PER_RUN", "50"))
 
+    # Rescore sweep: a CVE published before NVD finishes its analysis has no
+    # CVSS base score, so it is stored as UNSCORED — and because the analyzer
+    # skips anything with an existing analysis object, that verdict would never
+    # be revisited. The daily sweep re-checks them against NVD's lastMod feed.
+    #
+    # LOOKBACK_DAYS is the modification window asked of NVD (7 gives a week of
+    # overlap, so a missed run self-heals; NVD caps this at 120). INDEX_DAYS is
+    # how far back we look in our OWN table for unscored rows — deliberately
+    # much wider, because a CVE published months ago can be analyzed today.
+    RESCORE_LOOKBACK_DAYS = int(os.getenv("RESCORE_LOOKBACK_DAYS", "7"))
+    RESCORE_INDEX_DAYS = int(os.getenv("RESCORE_INDEX_DAYS", "180"))
+    RESCORE_MAX_PER_RUN = int(os.getenv("RESCORE_MAX_PER_RUN", "300"))
+
     # DynamoDB read-model: the analyzer mirrors each scored CVE into this table
     # so the site can Query it (by day or by vendor, ranked by score) instead of
     # listing the analysis bucket. Unset means "S3 only" — the mirror write is
