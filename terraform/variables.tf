@@ -97,7 +97,14 @@ variable "rescore_index_days" {
 variable "rescore_max_per_run" {
   description = "Max CVEs the rescore sweep scores per invocation. Rescoring reuses the stored model judgment, so this is a runtime bound, not a cost one."
   type        = number
-  default     = 300
+  # Must stay above the number of CVEs that gain a CVSS in one lookback window.
+  # At 300 the sweep capped out every single run, and anything it didn't reach
+  # aged past the 7-day lastMod window before the next run — batch mode skips
+  # those forever (they already have an analysis object), so a capped sweep
+  # strands them as permanently UNSCORED. At 300 the run finished in 88s of a
+  # 600s timeout, so the cap, not the clock, was the limit. This sets it high
+  # enough that the handler's own wall-clock guard is what stops the loop.
+  default = 2000
 }
 
 variable "ranking_schedule_expression" {
