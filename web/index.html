@@ -115,6 +115,35 @@
     .hint { margin: 0 0 1rem; font-size: 0.75rem; color: #6b7c96; }
     .results-meta { font-size: 0.75rem; color: #9fb0c7; margin-bottom: 0.4rem; }
 
+    /* --- priority band key ---
+       The pill in each row shows the SCORE but is coloured by PRIORITY, so
+       without this the colour is unreadable. Reuses the .pill classes above so
+       the swatches can never drift from the rows they explain. */
+    .key {
+      margin: 0 0 1rem;
+      padding: 0.75rem 0.9rem;
+      background: #0b1220;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.55rem 1.1rem;
+    }
+    .key-item {
+      display: inline-flex; align-items: baseline; gap: 0.45rem;
+      font-size: 0.75rem; color: #9fb0c7;
+    }
+    .key .pill {
+      font-size: 0.68rem; min-width: 2.05rem;
+      padding: 0.14rem 0.4rem; font-weight: 700;
+    }
+    .key-item b { color: #c8d6ea; font-weight: 600; }
+    .key-note {
+      flex-basis: 100%; margin: 0.15rem 0 0;
+      font-size: 0.73rem; line-height: 1.5; color: #6b7c96;
+    }
+    .key-note strong { color: #9fb0c7; font-weight: 600; }
+
     /* result rows */
     .row { border-top: 1px solid rgba(255,255,255,0.06); padding: 0.75rem 0; }
     .row:first-child { border-top: none; }
@@ -127,7 +156,10 @@
     .pill.p1 { color: #ff9b9b; background: rgba(229,72,77,0.14);  border-color: rgba(229,72,77,0.40); }
     .pill.p2 { color: #f0b872; background: rgba(217,130,43,0.14); border-color: rgba(217,130,43,0.40); }
     .pill.p3 { color: #8fbcff; background: rgba(57,135,229,0.14); border-color: rgba(57,135,229,0.40); }
-    .pill.p4, .pill.unscored { color: #9fb0c7; background: rgba(159,176,199,0.12); border-color: rgba(159,176,199,0.30); }
+    .pill.p4 { color: #9fb0c7; background: rgba(159,176,199,0.12); border-color: rgba(159,176,199,0.30); }
+    /* Unscored is a missing measurement, not a low one — hollow and dashed so it
+       never reads as "we assessed this and it's fine". */
+    .pill.unscored { color: #6b7c96; background: none; border-style: dashed; border-color: rgba(159,176,199,0.35); }
     .cve { font-weight: 600; color: #e6edf7; text-decoration: none; }
     .cve:hover { color: #7fb0ff; text-decoration: underline; }
     .vendor { color: #9fb0c7; }
@@ -171,6 +203,22 @@
         <button type="submit">Search</button>
       </form>
       <p class="hint">Leave the box empty to browse the most recent CVEs. The date window applies when you're not searching a specific vendor or CVE.</p>
+
+      <div class="key" role="group" aria-label="What the priority bands mean">
+        <span class="key-item"><span class="pill p1">P1</span> <b>75–100</b> act now</span>
+        <span class="key-item"><span class="pill p2">P2</span> <b>50–74</b> this week</span>
+        <span class="key-item"><span class="pill p3">P3</span> <b>25–49</b> not urgent</span>
+        <span class="key-item"><span class="pill p4">P4</span> <b>0–24</b> track only</span>
+        <span class="key-item"><span class="pill unscored">—</span> <b>unscored</b> awaiting NVD</span>
+        <p class="key-note">
+          <strong>LoopScore</strong> is our own 0–100 risk number: the CVE's CVSS severity,
+          weighted by how widespread the affected software is and how exploitable the flaw is
+          in practice. Each row below shows the <strong>score</strong> in the pill and its
+          <strong>band</strong> in the pill's colour. P1s at 85 or above also trigger an
+          immediate alert rather than waiting for the next digest.
+        </p>
+      </div>
+
       <div class="results" id="results"></div>
     </section>
 
@@ -311,6 +359,11 @@
       const body = rows.map((r) => {
         const cls = PRIORITY_CLASS[r.priority] || "unscored";
         const score = r.loop_score == null ? "—" : r.loop_score;
+        // The pill's number is the score and its colour is the band, so spell both
+        // out for hover and for screen readers — the colour alone carries meaning.
+        const pillLabel = r.loop_score == null
+          ? "Not yet scored — NVD has not published a CVSS base score"
+          : `LoopScore ${r.loop_score} · ${r.priority || "unrated"}`;
         const line = [
           r.severity ? esc(r.severity) : "",
           r.cvss == null ? "" : "CVSS " + esc(r.cvss),
@@ -319,7 +372,7 @@
         const cve = esc(r.cve_id);
         return `<article class="row">
           <div class="row-main">
-            <span class="pill ${cls}" title="${esc(r.priority || "")}">${esc(score)}</span>
+            <span class="pill ${cls}" title="${esc(pillLabel)}" aria-label="${esc(pillLabel)}">${esc(score)}</span>
             <a class="cve" href="https://nvd.nist.gov/vuln/detail/${cve}" target="_blank" rel="noopener noreferrer">${cve}</a>
             <span class="vendor">${esc(r.vendor)}</span>
             <span class="meta">${line}</span>
