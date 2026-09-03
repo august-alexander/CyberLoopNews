@@ -61,7 +61,7 @@
       100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
     }
 
-    /* --- top-10 LoopScore bar chart --- */
+    /* --- cards --- */
     .card {
       margin: 2.5rem auto 0;
       width: min(44rem, 100%);
@@ -93,6 +93,45 @@
     .score-label { fill: #e6edf7; font-size: 11px; font-weight: 600; pointer-events: none; }
     .state { color: #9fb0c7; font-size: 0.9rem; }
 
+    /* --- CVE volume: hero number + 30-day sparkline --- */
+    .trend-head {
+      display: flex; align-items: baseline; justify-content: space-between;
+      flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 0.5rem;
+    }
+    .stat-label { display: block; font-size: 0.8rem; color: #9fb0c7; }
+    /* Proportional figures, not tabular — this is a standalone display number,
+       and tabular digits read loose at this size. */
+    .stat-value {
+      display: block; font-size: 3rem; font-weight: 600;
+      line-height: 1.05; letter-spacing: -0.02em; color: #e6edf7;
+    }
+    .spark { width: 100%; height: auto; display: block; }
+    .spark-line { fill: none; stroke: #4f8cff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+    .spark-area { fill: #4f8cff; opacity: 0.10; }
+    /* 2px ring in the surface colour so the dot stays legible over the line. */
+    .spark-dot { fill: #4f8cff; stroke: #0f1626; stroke-width: 2; }
+    .spark-value { fill: #9fb0c7; font-size: 11px; font-weight: 600; pointer-events: none; }
+    .spark-axis { fill: #6b7c96; font-size: 10px; }
+    /* One hit band per day: invisible until hovered, then a faint wash + the
+       native tooltip carries the exact date and count. */
+    .spark-hit { fill: #e6edf7; opacity: 0; }
+    .spark-hit:hover { opacity: 0.07; }
+
+    /* --- segmented controls (timeframe · how many) --- */
+    .controls { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; margin-bottom: 0.6rem; }
+    .seg { display: inline-flex; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; overflow: hidden; }
+    .seg button {
+      font: inherit; font-size: 0.8rem; cursor: pointer;
+      background: #0b1220; color: #9fb0c7; border: 0;
+      padding: 0.4rem 0.7rem;
+      border-left: 1px solid rgba(255,255,255,0.09);
+    }
+    .seg button:first-child { border-left: 0; }
+    .seg button:hover { color: #e6edf7; }
+    .seg button[aria-pressed="true"] { background: #1b2c4a; color: #e6edf7; font-weight: 600; }
+    .seg button:focus-visible { outline: 2px solid #4f8cff; outline-offset: -2px; }
+    .seg-label { align-self: center; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: #6b7c96; }
+
     /* --- search / filter panel --- */
     .search { width: min(52rem, 100%); }
     .filters { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.5rem; }
@@ -116,9 +155,9 @@
     .results-meta { font-size: 0.75rem; color: #9fb0c7; margin-bottom: 0.4rem; }
 
     /* --- priority band key ---
-       The pill in each row shows the SCORE but is coloured by PRIORITY, so
-       without this the colour is unreadable. Reuses the .pill classes above so
-       the swatches can never drift from the rows they explain. */
+       Each row's score badge is coloured by PRIORITY, so without this the colour
+       is unreadable. Reuses the .pill classes above so the swatches can never
+       drift from the rows they explain. */
     .key {
       margin: 0 0 1rem;
       padding: 0.75rem 0.9rem;
@@ -152,7 +191,7 @@
       font-size: 0.78rem; font-weight: 700; min-width: 2.4rem; text-align: center;
       padding: 0.2rem 0.5rem; border-radius: 999px; border: 1px solid transparent;
     }
-    /* pill color follows PRIORITY, one source of truth with the analyzer's bands */
+    /* colour follows PRIORITY, one source of truth with the analyzer's bands */
     .pill.p1 { color: #ff9b9b; background: rgba(229,72,77,0.14);  border-color: rgba(229,72,77,0.40); }
     .pill.p2 { color: #f0b872; background: rgba(217,130,43,0.14); border-color: rgba(217,130,43,0.40); }
     .pill.p3 { color: #8fbcff; background: rgba(57,135,229,0.14); border-color: rgba(57,135,229,0.40); }
@@ -173,21 +212,48 @@
   <main>
     <span class="badge">CVE Risk Intelligence</span>
     <h1>Cyber<span class="accent">Loop</span></h1>
-    <p class="sub">LoopScore dashboard is being wired up. First live widget below — fed from data in S3.</p>
+    <p class="sub">LoopScore dashboard is being wired up. First live widgets below.</p>
+
+    <section class="card trend">
+      <h2>CVE volume</h2>
+      <div class="trend-head">
+        <span class="stat">
+          <span class="stat-label">Published in the last 24 hours</span>
+          <span class="stat-value" id="count24">—</span>
+        </span>
+        <p class="caption" style="margin:0">New CVEs per day · last 30 days</p>
+      </div>
+      <svg class="spark" viewBox="0 0 640 110" preserveAspectRatio="xMidYMid meet"
+           role="img" aria-label="Sparkline of CVEs published per day over the last 30 days"></svg>
+    </section>
 
     <section class="card">
-      <h2>Top 10 CVEs by LoopScore</h2>
-      <p class="caption">Highest-scoring CVEs from the latest ranking run · grouped by vendor</p>
-      <svg class="chart" viewBox="0 0 640 380" preserveAspectRatio="xMidYMid meet"
-           role="img" aria-label="Bar chart of the top 10 CVEs by LoopScore, grouped by vendor"></svg>
+      <h2 id="chartTitle">Top CVEs by LoopScore</h2>
+      <div class="controls">
+        <span class="seg-label">Published</span>
+        <div class="seg" id="windowSeg" role="group" aria-label="Timeframe">
+          <button type="button" data-window="1">Today</button>
+          <button type="button" data-window="7">7 days</button>
+          <button type="button" data-window="30">30 days</button>
+        </div>
+        <span class="seg-label">Show</span>
+        <div class="seg" id="topSeg" role="group" aria-label="How many CVEs to chart">
+          <button type="button" data-top="10">10</button>
+          <button type="button" data-top="25">25</button>
+          <button type="button" data-top="50">50</button>
+        </div>
+      </div>
+      <p class="caption" id="chartCaption">Highest-scoring CVEs · grouped by vendor</p>
+      <svg class="chart" viewBox="0 0 640 420" preserveAspectRatio="xMidYMid meet"
+           role="img" aria-label="Bar chart of the top CVEs by LoopScore, grouped by vendor"></svg>
       <p class="state">Loading…</p>
     </section>
 
     <section class="card search">
       <h2>Search the CVE database</h2>
-      <p class="caption">Filter by vendor, or look up a CVE by ID · ranked by LoopScore, worst first</p>
+      <p class="caption">Filter by vendor or product, or look up a CVE by ID · ranked by LoopScore, worst first</p>
       <form class="filters" id="filters">
-        <input id="q" type="search" placeholder="Vendor (e.g. cisco) or CVE-2026-1234" autocomplete="off" />
+        <input id="q" type="search" placeholder="Vendor or product (e.g. azure, jfrog) or CVE-2026-1234" autocomplete="off" />
         <select id="minScore" aria-label="Minimum LoopScore">
           <option value="0">Any score</option>
           <option value="25">P3+ (≥25)</option>
@@ -202,7 +268,7 @@
         </select>
         <button type="submit">Search</button>
       </form>
-      <p class="hint">Leave the box empty to browse the most recent CVEs. The date window applies when you're not searching a specific vendor or CVE.</p>
+      <p class="hint">Search the vendor (cisco) or the product you actually run (azure, gcp, grafana). Two words narrow the result. Leave the box empty to browse the most recent CVEs — the date window applies only then.</p>
 
       <div class="key" role="group" aria-label="What the priority bands mean">
         <span class="key-item"><span class="pill p1">P1</span> <b>75–100</b> act now</span>
@@ -213,9 +279,8 @@
         <p class="key-note">
           <strong>LoopScore</strong> is our own 0–100 risk number: the CVE's CVSS severity,
           weighted by how widespread the affected software is and how exploitable the flaw is
-          in practice. Each row below shows the <strong>score</strong> in the pill and its
-          <strong>band</strong> in the pill's colour. P1s at 85 or above also trigger an
-          immediate alert rather than waiting for the next digest.
+          in practice. Each row shows the LoopScore, coloured by band. P1s at 85 or above
+          also trigger an immediate alert rather than waiting for the next digest.
         </p>
       </div>
 
@@ -226,16 +291,21 @@
   </main>
 
   <script>
+    // --- dashboard.json: the top-N chart, the 24h figure and the 30-day trend ---
+    // One fetch. The publisher (dashboard_handler.py) writes every timeframe and
+    // the full 50 rows each run, so the buttons below re-render from data already
+    // in the page rather than making a request per click.
+
     // Categorical palette (dark-surface steps). Color follows the VENDOR (identity),
     // assigned in first-seen order — never by rank, so a data change never repaints.
     const PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#9085e9", "#008300", "#e66767"];
     const SVGNS = "http://www.w3.org/2000/svg";
 
-    // viewBox geometry
-    const W = 640, H = 380;
-    const plot = { left: 38, right: 632, top: 22, bottom: 320 }; // bottom = baseline
-    const Y_MAX = 100;                                            // LoopScore is 0–100
-    const barGap = 6, groupGap = 24;                              // within-group vs between-vendor
+    // viewBox geometry. The 90px below the baseline is for the vendor labels,
+    // which rotate once there are too many groups to write them flat.
+    const plot = { left: 38, right: 632, top: 22, bottom: 330 }; // bottom = baseline
+    const Y_MAX = 100;                                           // LoopScore is 0–100
+    const BAR_MAX = 24;                                          // never fill the slot
 
     const el = (name, attrs, parent) => {
       const n = document.createElementNS(SVGNS, name);
@@ -245,68 +315,192 @@
     };
     const yFor = (score) => plot.bottom - (score / Y_MAX) * (plot.bottom - plot.top);
 
-    fetch("/data/top10.json")
-      .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
-      .then((rows) => {
-        const svg = document.querySelector(".chart");
+    // Rounded at the data end, square at the baseline — a bar rounded on all four
+    // corners lifts visibly off the axis and misreads its own zero.
+    function barPath(x, y, w, h) {
+      const r = Math.max(0, Math.min(4, w / 2, h));
+      return `M${x},${y + h}V${y + r}a${r},${r} 0 0 1 ${r},${-r}`
+           + `h${w - 2 * r}a${r},${r} 0 0 1 ${r},${r}V${y + h}Z`;
+    }
 
-        // Group by vendor; order vendors by their top score, CVEs within by score.
-        const groups = {};
-        rows.forEach((d) => (groups[d.vendor] ||= []).push(d));
-        const vendors = Object.keys(groups).sort(
-          (a, b) => Math.max(...groups[b].map((d) => d.score)) - Math.max(...groups[a].map((d) => d.score))
-        );
-        vendors.forEach((v) => groups[v].sort((a, b) => b.score - a.score));
-        const colorOf = Object.fromEntries(vendors.map((v, i) => [v, PALETTE[i % PALETTE.length]]));
+    const WINDOW_LABEL = { 1: "today (UTC)", 7: "in the last 7 days", 30: "in the last 30 days" };
 
-        // Bar width so N bars + intra/inter-group gaps fill the plot exactly.
-        const N = rows.length, G = vendors.length;
-        const gaps = (N - G) * barGap + (G - 1) * groupGap;
-        const barW = (plot.right - plot.left - gaps) / N;
+    let DATA = null;              // the whole published payload
+    // NOT named `top` — a global `let top` collides with window.top, which is a
+    // non-configurable global property, and the whole script fails to parse.
+    let winDays = 7, topN = 10;   // current button state
 
-        // y gridlines + axis labels at 0/25/50/75/100.
-        const grid = el("g", { class: "grid" }, svg);
-        for (let s = 0; s <= Y_MAX; s += 25) {
-          const y = yFor(s);
-          el("line", { x1: plot.left, y1: y, x2: plot.right, y2: y }, grid);
-          el("text", { x: plot.left - 8, y: y + 4, "text-anchor": "end", class: "axis-label" }, grid)
-            .textContent = s;
-        }
+    function drawChart() {
+      const svg = document.querySelector(".chart");
+      const state = document.querySelector(".state");
+      svg.textContent = "";
 
-        // Bars, grouped by vendor.
-        let x = plot.left;
-        vendors.forEach((vendor) => {
-          const groupStart = x;
-          groups[vendor].forEach((d) => {
-            const y = yFor(d.score), h = plot.bottom - y;
-            const g = el("g", { class: "bar" }, svg);
+      const rows = (DATA.windows[String(winDays)] || []).slice(0, topN);
+      document.getElementById("chartCaption").textContent =
+        `Top ${rows.length} by LoopScore · CVEs published ${WINDOW_LABEL[winDays]} · grouped by vendor`;
+      if (!rows.length) {
+        state.textContent = `No scored CVEs published ${WINDOW_LABEL[winDays]} yet.`;
+        state.style.display = "";
+        return;
+      }
+      state.style.display = "none";
 
-            el("rect", { x, y, width: barW, height: h, rx: 4, fill: colorOf[vendor] }, g);
-            el("title", {}, g).textContent = `${d.cve} — ${vendor} — LoopScore ${d.score}`;
+      // Group by vendor; order vendors by their top score, CVEs within by score.
+      const groups = {};
+      rows.forEach((d) => (groups[d.vendor] ||= []).push(d));
+      const vendors = Object.keys(groups).sort(
+        (a, b) => Math.max(...groups[b].map((d) => d.score)) - Math.max(...groups[a].map((d) => d.score))
+      );
+      vendors.forEach((v) => groups[v].sort((a, b) => b.score - a.score));
+      const colorOf = Object.fromEntries(vendors.map((v, i) => [v, PALETTE[i % PALETTE.length]]));
 
-            // score above the bar
+      // Gaps tighten as the bar count grows, but the within-group gap never drops
+      // below the 2px surface gap that separates touching bars.
+      const N = rows.length, G = vendors.length;
+      const barGap = N > 25 ? 2 : N > 10 ? 4 : 6;
+      const groupGap = N > 25 ? 10 : N > 10 ? 16 : 24;
+      const gaps = (N - G) * barGap + (G - 1) * groupGap;
+      const barW = Math.min(BAR_MAX, (plot.right - plot.left - gaps) / N);
+      // Centre the row when the cap leaves the plot underfilled (few bars).
+      const used = N * barW + gaps;
+      const x0 = plot.left + Math.max(0, (plot.right - plot.left - used) / 2);
+
+      // Direct labels stay sparing. The default view labels every bar because ten
+      // of them fit; past that a number on all 25 or 50 is noise, so only each
+      // vendor group's own top bar is labelled — and nothing at all once the bars
+      // are too thin to hang a number over. Every bar keeps its hover tooltip.
+      const labelAll = N <= 10 && barW >= 12;
+      const labelLeaders = !labelAll && barW >= 10;
+
+      // Vendor label sizing, decided BEFORE drawing: a label gets its group's
+      // width plus the gap either side of it. Rotating is driven by whether the
+      // names actually fit, not by the bar count — two single-bar groups next to
+      // each other ("Adobe", "WordPress") collide at any N if we only count bars.
+      const trim = (v) => (v.length > 14 ? v.slice(0, 13) + "…" : v);
+      const CHAR_W = 6.3; // ≈ average advance at the 12px label size
+      const slotFor = (v) => groups[v].length * barW + (groups[v].length - 1) * barGap + groupGap;
+      const rotate = vendors.some((v) => trim(v).length * CHAR_W > slotFor(v));
+
+      // y gridlines + axis labels at 0/25/50/75/100.
+      const grid = el("g", { class: "grid" }, svg);
+      for (let s = 0; s <= Y_MAX; s += 25) {
+        const y = yFor(s);
+        el("line", { x1: plot.left, y1: y, x2: plot.right, y2: y }, grid);
+        el("text", { x: plot.left - 8, y: y + 4, "text-anchor": "end", class: "axis-label" }, grid)
+          .textContent = s;
+      }
+
+      // Bars, grouped by vendor.
+      let x = x0;
+      vendors.forEach((vendor) => {
+        const groupStart = x;
+        groups[vendor].forEach((d, i) => {
+          const y = yFor(d.score), h = plot.bottom - y;
+          const g = el("g", { class: "bar" }, svg);
+
+          el("path", { d: barPath(x, y, barW, h), fill: colorOf[vendor] }, g);
+          el("title", {}, g).textContent = `${d.cve} — ${vendor} — LoopScore ${d.score}`;
+
+          if (labelAll || (labelLeaders && i === 0)) {
             el("text", { x: x + barW / 2, y: y - 6, "text-anchor": "middle", class: "score-label" }, g)
               .textContent = d.score;
-
-            // CVE id shown on hover via the <title> tooltip above — kept off the bar
-            // so a low LoopScore (short bar) doesn't clip or overflow the label.
-
-            x += barW + barGap;
-          });
-          x += groupGap - barGap; // swap the last intra-gap for a group gap
-
-          // vendor label centered under its group
-          const groupEnd = x - groupGap;
-          el("text", {
-            x: (groupStart + groupEnd) / 2, y: plot.bottom + 22,
-            "text-anchor": "middle", class: "vendor-label",
-          }, svg).textContent = vendor;
+          }
+          x += barW + barGap;
         });
+        x += groupGap - barGap; // swap the last intra-gap for a group gap
 
-        // baseline
-        el("line", { x1: plot.left, y1: plot.bottom, x2: plot.right, y2: plot.bottom, stroke: "#38506f" }, svg);
+        // Vendor label under its group. The CVE id and score stay in the hover
+        // tooltip either way, so a dropped label costs nothing but the name.
+        const groupEnd = x - groupGap;
+        if (groupEnd - groupStart < 16) return; // no room even rotated
+        const cx = (groupStart + groupEnd) / 2;
+        const ly = plot.bottom + (rotate ? 16 : 22);
+        const label = el("text", {
+          x: cx, y: ly, "text-anchor": rotate ? "end" : "middle", class: "vendor-label",
+        }, svg);
+        label.textContent = trim(vendor);
+        if (!rotate) return;
+        // Rotated labels end at the anchor and run up-left, so the leftmost
+        // group's name starts off the viewBox and gets clipped. Measure the text
+        // that was actually rendered — a character-width estimate is off by
+        // enough to still clip — and nudge the anchor right by the overhang.
+        // Slightly off-centre under its group beats a cropped vendor name.
+        const overhang = Math.cos(35 * Math.PI / 180) * label.getComputedTextLength();
+        const shifted = cx + Math.max(0, 4 - (cx - overhang));
+        label.setAttribute("x", shifted);
+        label.setAttribute("transform", `rotate(-35, ${shifted}, ${ly})`);
+      });
 
-        document.querySelector(".state").remove();
+      // baseline
+      el("line", { x1: plot.left, y1: plot.bottom, x2: plot.right, y2: plot.bottom, stroke: "#38506f" }, svg);
+    }
+
+    function drawSpark(days) {
+      const svg = document.querySelector(".spark");
+      svg.textContent = "";
+      if (!days.length) return;
+
+      // viewBox is 640x110: the plot sits between TOP and BASE, with the date
+      // labels in the strip underneath.
+      const SW = 640, LEFT = 6, RIGHT = 34, TOP = 18, BASE = 84;
+      const counts = days.map((d) => d.count);
+      const peak = Math.max(...counts, 1);
+      const x = (i) => LEFT + (i * (SW - LEFT - RIGHT)) / Math.max(1, days.length - 1);
+      const y = (c) => BASE - (c / peak) * (BASE - TOP);
+
+      const line = days.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.count).toFixed(1)}`).join("");
+      el("path", { d: `${line}L${x(days.length - 1).toFixed(1)},${BASE}L${x(0).toFixed(1)},${BASE}Z`, class: "spark-area" }, svg);
+      el("path", { d: line, class: "spark-line" }, svg);
+
+      // Label the peak and the latest point only — a number on all 30 is noise.
+      const peakIdx = counts.indexOf(peak), lastIdx = days.length - 1;
+      const label = (i, anchor) => {
+        el("text", {
+          x: x(i), y: Math.max(10, y(counts[i]) - 9), "text-anchor": anchor, class: "spark-value",
+        }, svg).textContent = counts[i];
+      };
+      if (peakIdx !== lastIdx) label(peakIdx, "middle");
+      label(lastIdx, "end");
+      el("circle", { cx: x(lastIdx), cy: y(counts[lastIdx]), r: 4, class: "spark-dot" }, svg);
+
+      // First and last dates, so the 30 days are anchored to something.
+      const dayLabel = (iso) =>
+        new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+      el("text", { x: LEFT, y: 104, class: "spark-axis" }, svg).textContent = dayLabel(days[0].day);
+      el("text", { x: x(lastIdx), y: 104, "text-anchor": "end", class: "spark-axis" }, svg)
+        .textContent = dayLabel(days[lastIdx].day);
+
+      // One hit band per day carrying the exact value on hover.
+      const band = (SW - LEFT - RIGHT) / Math.max(1, days.length - 1);
+      days.forEach((d, i) => {
+        const hit = el("rect", {
+          x: x(i) - band / 2, y: 8, width: band, height: BASE - 8, class: "spark-hit",
+        }, svg);
+        el("title", {}, hit).textContent = `${dayLabel(d.day)} — ${d.count} CVE${d.count === 1 ? "" : "s"}`;
+      });
+    }
+
+    function setSeg(id, attr, value, onPick) {
+      const seg = document.getElementById(id);
+      [...seg.children].forEach((b) => {
+        const mine = Number(b.dataset[attr]);
+        b.setAttribute("aria-pressed", String(mine === value));
+        b.onclick = () => onPick(mine);
+      });
+    }
+    const paintSegs = () => {
+      setSeg("windowSeg", "window", winDays, (v) => { winDays = v; paintSegs(); drawChart(); });
+      setSeg("topSeg", "top", topN, (v) => { topN = v; paintSegs(); drawChart(); });
+    };
+
+    fetch("/data/dashboard.json")
+      .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then((data) => {
+        DATA = data;
+        document.getElementById("count24").textContent = (data.last_24h ?? 0).toLocaleString();
+        drawSpark(data.days || []);
+        paintSegs();
+        drawChart();
       })
       .catch((err) => {
         document.querySelector(".state").textContent = "Could not load data (" + err.message + ")";
@@ -317,8 +511,9 @@
     // --- CVE search panel: queries the same-origin /api/search endpoint ---
     // The endpoint answers three shapes (see search_handler.py); which one we ask
     // for is inferred from the box: a CVE-looking value -> exact lookup, any other
-    // text -> vendor filter, empty -> browse the recent window. min_score/days are
-    // sent where they apply; the backend ignores the ones a given mode doesn't use.
+    // text -> vendor/product term search, empty -> browse the recent window.
+    // min_score/days are sent where they apply; the backend ignores the ones a
+    // given mode doesn't use.
     const PRIORITY_CLASS = { P1: "p1", P2: "p2", P3: "p3", P4: "p4", UNSCORED: "unscored" };
     const CVE_RE = /^CVE-\d{4}-\d{4,}$/i;
     const results = document.getElementById("results");
@@ -337,7 +532,7 @@
       if (CVE_RE.test(q)) {
         p.set("cve", q.toUpperCase());
       } else if (q) {
-        p.set("vendor", q.toLowerCase());
+        p.set("q", q);
         p.set("min_score", minScore);
       } else {
         p.set("days", days);
@@ -349,18 +544,24 @@
 
     function render(data) {
       const rows = data.results || [];
+      const q = data.query || {};
       if (!rows.length) {
-        results.innerHTML = '<p class="empty">No CVEs match that filter.</p>';
+        results.innerHTML = q.q
+          ? `<p class="empty">Nothing matches “${esc(q.q)}”. Try the vendor name, or a shorter product name.</p>`
+          : '<p class="empty">No CVEs match that filter.</p>';
         return;
       }
-      const q = data.query || {};
-      const window = q.days ? ` · last ${q.days} day${q.days === 1 ? "" : "s"}` : "";
-      const meta = `<p class="results-meta">${rows.length} result${rows.length === 1 ? "" : "s"}${window}</p>`;
+      // Say which words were actually searched — the box is tokenised, so
+      // "Azure DevOps" becomes azure + devops and the user should see that.
+      const scope = (q.terms && q.terms.length)
+        ? ` matching ${q.terms.map((t) => `“${esc(t)}”`).join(" + ")}`
+        : q.days ? ` · last ${q.days} day${q.days === 1 ? "" : "s"}` : "";
+      const meta = `<p class="results-meta">${rows.length} result${rows.length === 1 ? "" : "s"}${scope}</p>`;
       const body = rows.map((r) => {
         const cls = PRIORITY_CLASS[r.priority] || "unscored";
         const score = r.loop_score == null ? "—" : r.loop_score;
-        // The pill's number is the score and its colour is the band, so spell both
-        // out for hover and for screen readers — the colour alone carries meaning.
+        // The badge's number is the score and its colour is the band, so spell
+        // both out for hover and for screen readers — colour alone carries meaning.
         const pillLabel = r.loop_score == null
           ? "Not yet scored — NVD has not published a CVSS base score"
           : `LoopScore ${r.loop_score} · ${r.priority || "unrated"}`;

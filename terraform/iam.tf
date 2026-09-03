@@ -159,6 +159,18 @@ data "aws_iam_policy_document" "analyzer_permissions" {
     resources = [aws_dynamodb_table.cves.arn]
   }
 
+  # Write the CVE's search-term rows. BatchWriteItem as well as PutItem: a CVE
+  # has up to a dozen terms (terms.MAX_TERMS) and they go in one batched request.
+  # Still no delete — same rebuild-don't-mutate rule as above.
+  statement {
+    sid = "DynamoWriteTerms"
+    actions = [
+      "dynamodb:PutItem",
+      "dynamodb:BatchWriteItem",
+    ]
+    resources = [aws_dynamodb_table.cve_terms.arn]
+  }
+
   # Read back the UNSCORED rows for the daily rescore sweep. This is the one
   # place the analyzer reads the table it otherwise only writes to, and it's a
   # deliberate exception: score_sk == -1 is an exact key condition on by_day, so
@@ -295,10 +307,10 @@ resource "aws_iam_role_policy" "red_alert" {
 }
 
 # ---------------------------------------------------------------------------
-# Dashboard publisher role: read the scored results from the analysis bucket and
+# Dashboard publisher role: read the scored CVEs from the read-model index and
 # write ONE summary object into the site bucket for the static dashboard. Narrow
-# like the ranking role — no Bedrock, no raw data bucket, no SNS; the only write
-# is scoped to the site bucket's data/ prefix.
+# like the ranking role — no Bedrock, no raw data bucket, no SNS, no S3 read at
+# all; the only write is scoped to the site bucket's data/ prefix.
 # ---------------------------------------------------------------------------
 resource "aws_iam_role" "dashboard" {
   name               = "${local.name_prefix}-dashboard-role"
@@ -317,18 +329,15 @@ data "aws_iam_policy_document" "dashboard_permissions" {
     resources = ["arn:aws:logs:*:*:*"]
   }
 
-  # Read the per-CVE scored results.
+  # Read the scored CVEs off the by_day index. This replaced reading the analysis
+  # bucket object-by-object: the page now offers a 30-day window and a 30-day
+  # daily trend, which as a bucket listing would be thousands of GETs an hour and
+  # as an index query is one small Query per day. The role lost its S3 read and
+  # list entirely as a result — it is strictly narrower than it was.
   statement {
-    sid       = "S3ReadAnalysis"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.analysis.arn}/*"]
-  }
-
-  # List analysis/ to find the objects scored within the lookback window.
-  statement {
-    sid       = "S3ListAnalysis"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.analysis.arn]
+    sid       = "DynamoQueryByDay"
+    actions   = ["dynamodb:Query"]
+    resources = ["${aws_dynamodb_table.cves.arn}/index/by_day"]
   }
 
   # Publish the summary JSON — narrow write to the site bucket's data/ prefix only.
@@ -446,16 +455,23 @@ data "aws_iam_policy_document" "search_permissions" {
   }
 
   # Read-only access to the CVE table. GetItem targets the base table; Query
-  # targets both the base table and its indexes, so index/* is listed too.
+  # targets both the base table and its indexes, so index/* is listed too. The
+  # terms table is read the same way (its by_score LSI answers a product search),
+  # and is likewise Query-only — no Scan anywhere.
   statement {
     sid = "DynamoReadCves"
     actions = [
       "dynamodb:GetItem",
+      # A multi-word search checks the extra words by exact key across one page
+      # of results — see search_handler._has_term.
+      "dynamodb:BatchGetItem",
       "dynamodb:Query",
     ]
     resources = [
       aws_dynamodb_table.cves.arn,
       "${aws_dynamodb_table.cves.arn}/index/*",
+      aws_dynamodb_table.cve_terms.arn,
+      "${aws_dynamodb_table.cve_terms.arn}/index/*",
     ]
   }
 }

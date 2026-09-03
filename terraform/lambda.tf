@@ -211,7 +211,8 @@ resource "aws_lambda_function" "analyzer" {
       OUTPUT_BUCKET        = aws_s3_bucket.analysis.id # scored outputs land here
       BEDROCK_MODEL_ID     = var.bedrock_model_id
       ANALYSIS_MAX_PER_RUN = var.analysis_max_per_run
-      CVE_TABLE            = aws_dynamodb_table.cves.name # queryable read-model
+      CVE_TABLE            = aws_dynamodb_table.cves.name      # queryable read-model
+      TERMS_TABLE          = aws_dynamodb_table.cve_terms.name # searchable-word rows
 
       # The rescore sweep calls NVD directly (lastMod window), so the analyzer
       # needs the API key the fetcher uses — batch/manual modes never do.
@@ -332,7 +333,8 @@ resource "aws_lambda_function" "search" {
 
   environment {
     variables = {
-      CVE_TABLE            = aws_dynamodb_table.cves.name # the only thing it reads
+      CVE_TABLE            = aws_dynamodb_table.cves.name      # by CVE id / by day
+      TERMS_TABLE          = aws_dynamodb_table.cve_terms.name # by vendor or product
       SEARCH_DEFAULT_LIMIT = var.search_default_limit
       SEARCH_MAX_LIMIT     = var.search_max_limit
       SEARCH_DEFAULT_DAYS  = var.search_default_days
@@ -390,9 +392,11 @@ resource "aws_cloudwatch_log_group" "dashboard" {
   tags              = local.tags
 }
 
-# Dashboard publisher: ranks the top-N LoopScore CVEs over a fixed lookback and
-# writes the static dashboard's summary JSON (data/top10.json) into the SITE
-# bucket, same-origin with index.html. Ships in the same zip as the other
+# Dashboard publisher: ranks the top LoopScore CVEs for each timeframe the page
+# offers, counts CVEs per day for its trend line, and writes the lot as one
+# summary JSON (data/dashboard.json) into the SITE bucket, same-origin with
+# index.html — so the page's timeframe and top-N buttons need no further
+# requests. Ships in the same zip as the other
 # Lambdas; only the handler entrypoint differs. Runs hourly via EventBridge (see
 # eventbridge.tf), a few minutes after the analyzer so it ranks fresh scores.
 resource "aws_lambda_function" "dashboard" {
@@ -408,12 +412,12 @@ resource "aws_lambda_function" "dashboard" {
 
   environment {
     variables = {
-      OUTPUT_BUCKET            = aws_s3_bucket.analysis.id # scored results live here
-      OUTPUT_PREFIX            = "analysis/"
-      SITE_BUCKET              = aws_s3_bucket.site.id # the dashboard's JSON lands here
-      DASHBOARD_KEY            = "data/top10.json"
-      DASHBOARD_LOOKBACK_HOURS = var.dashboard_lookback_hours
-      RANKING_TOP_N            = var.ranking_top_n
+      CVE_TABLE            = aws_dynamodb_table.cves.name # ranked/counted off by_day
+      SITE_BUCKET          = aws_s3_bucket.site.id        # the dashboard's JSON lands here
+      DASHBOARD_KEY        = "data/dashboard.json"
+      DASHBOARD_MAX_N      = var.dashboard_max_n
+      DASHBOARD_TREND_DAYS = var.dashboard_trend_days
+      DASHBOARD_WINDOWS    = var.dashboard_windows
     }
   }
 

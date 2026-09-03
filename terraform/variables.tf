@@ -137,10 +137,22 @@ variable "dashboard_schedule_expression" {
   default     = "cron(25 * * * ? *)"
 }
 
-variable "dashboard_lookback_hours" {
-  description = "How many hours of scored CVEs the dashboard publisher ranks for its top-N. Fixed window (unlike the alert's delta) so the chart always shows a full top-N."
+variable "dashboard_max_n" {
+  description = "How many CVEs each of the dashboard's timeframes carries. This is the largest top-N the page offers, so every setting of its 10/25/50 selector is a slice of data the browser already has."
   type        = number
-  default     = 24
+  default     = 50
+}
+
+variable "dashboard_trend_days" {
+  description = "Length of the per-day CVE count series behind the dashboard's sparkline."
+  type        = number
+  default     = 30
+}
+
+variable "dashboard_windows" {
+  description = "Timeframes the dashboard publishes, in days (1 = today). Must match the timeframe buttons in web/index.html."
+  type        = string
+  default     = "1,7,30"
 }
 
 variable "broadcast_slots" {

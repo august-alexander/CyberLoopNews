@@ -93,3 +93,60 @@ resource "aws_dynamodb_table" "cves" {
 
   tags = local.tags
 }
+
+# Search-terms table — how the site is searched by PRODUCT, not just by vendor.
+#
+# WHY A SECOND TABLE: `vendor_key` above is a single value, the CVE's primary
+# vendor. That makes a CVE shipped by Microsoft whose affected product is "Azure
+# DevOps" unfindable by "azure", and "gcp" unfindable by anything — which is
+# exactly how people search. A CVE has MANY searchable words, and DynamoDB
+# cannot index a multi-valued attribute: a GSI key is one scalar per item. The
+# standard shape for many-values-per-record is a row per (value, record), which
+# is what this table is.
+#
+# Derived and rebuildable from the analysis bucket, same as the table above
+# (analyzer `{"backfill": true}` writes both), so again no PITR.
+resource "aws_dynamodb_table" "cve_terms" {
+  name         = "${local.name_prefix}-cve-terms"
+  billing_mode = "PAY_PER_REQUEST"
+
+  # (term, cve_id) — one row per searchable word per CVE. cve_id is the range
+  # key rather than the score ON PURPOSE: a rescore changes a CVE's LoopScore,
+  # and a score-keyed row would leave the old row behind at the old score, so
+  # the same CVE would come back twice. Keyed this way a rescore overwrites, the
+  # same idempotency the base table gets from cve_id.
+  hash_key  = "term"
+  range_key = "cve_id"
+
+  attribute {
+    name = "term"
+    type = "S"
+  }
+
+  attribute {
+    name = "cve_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "score_sk"
+    type = "N"
+  }
+
+  # Worst-first ordering within a term, and `min_score` as a key condition. A
+  # LOCAL secondary index, not a global one: it re-sorts rows inside a single
+  # term's partition, which is precisely one search. -1 marks UNSCORED here too,
+  # so the default floor of 0 leaves them out (see analysis_handler.UNSCORED_SK).
+  local_secondary_index {
+    name            = "by_score"
+    range_key       = "score_sk"
+    projection_type = "ALL"
+  }
+
+  # ALL, because a term query is the whole answer: the row carries the fields the
+  # results panel renders (analysis_handler.TERM_ROW_FIELDS), so a search never
+  # fetches back to the CVE table. The rows are a trimmed projection — the
+  # model's rationales are not copied a dozen times per CVE.
+
+  tags = local.tags
+}

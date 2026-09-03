@@ -44,7 +44,7 @@ output "ranking_log_group" {
 }
 
 output "dashboard_function_name" {
-  description = "Name of the dashboard data-publisher Lambda (writes data/top10.json to the site bucket)."
+  description = "Name of the dashboard data-publisher Lambda (writes data/dashboard.json to the site bucket)."
   value       = aws_lambda_function.dashboard.function_name
 }
 
@@ -59,7 +59,7 @@ output "search_log_group" {
 }
 
 output "search_endpoint" {
-  description = "Same-origin search API (through CloudFront). Try: <url>?days=7 or ?vendor=cisco or ?cve=CVE-2026-1234."
+  description = "Same-origin search API (through CloudFront). Try: <url>?days=7 or ?q=azure or ?cve=CVE-2026-1234."
   value       = "https://${aws_cloudfront_distribution.site.domain_name}/api/search"
 }
 

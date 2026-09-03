@@ -56,10 +56,17 @@ RUBRIC:
      is trivially automatable; 0.5 = plausible with some barriers; 0.1 =
      theoretical, needs local access or a complex chain.
 
+Also list the words someone would TYPE to find this CVE. The affected[] data
+names a vendor and a product, but people search for the thing they run, not the
+company that sells it — "azure", not "microsoft"; "gcp", not "google". Give the
+product/service names AND their common short forms and aliases (gcp, o365,
+entra, k8s, rhel). Lowercase, 3-8 of them, no version numbers.
+
 Return JSON EXACTLY in this shape:
 {
   "prevalence": {"value": number, "rationale": string},
   "exploitability": {"value": number, "rationale": string},
+  "keywords": [string],
   "summary": string
 }
 """
@@ -153,7 +160,9 @@ def assess(trimmed, client=None):
                 "content": [{"text": f"{PROMPT}\n\nCVE:\n{json.dumps(trimmed, indent=2)}"}],
             }
         ],
-        inferenceConfig={"maxTokens": 500, "temperature": 0},  # temp 0 = repeatable
+        # 700 not 500: the reply now also carries the `keywords` list. Too low a
+        # cap truncates the JSON mid-string and _parse_json raises on every CVE.
+        inferenceConfig={"maxTokens": 700, "temperature": 0},  # temp 0 = repeatable
     )
     text = resp["output"]["message"]["content"][0]["text"]
     logger.info("bedrock usage for %s: %s", trimmed.get("id"), resp.get("usage"))
@@ -187,6 +196,10 @@ def score_cve(cve, client=None):
         "vendors": trimmed.get("vendors"),
         "prevalence": judgment["prevalence"],
         "exploitability": judgment["exploitability"],
+        # Search aliases for the terms table (see terms.py). Optional on purpose
+        # — results scored before this field existed simply don't have it, and
+        # terms_for() falls back to the vendor/product strings.
+        "keywords": judgment.get("keywords") or [],
         "loop_score": loop_score,
         "priority": priority,
         "summary": judgment.get("summary"),

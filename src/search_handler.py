@@ -13,15 +13,22 @@ are cached at the edge.
 
 Query params (all on GET /api/search):
   cve=CVE-2026-1234        exact lookup            -> GetItem on the base table
-  vendor=cisco             one vendor, worst-first -> by_vendor GSI
+  q=azure                  vendor OR product       -> terms table, by_score LSI
   days=7                   recent window (default) -> by_day GSI, newest N days
   min_score=75             floor on LoopScore      -> score_sk >= N key condition
   limit=25                 page size               -> capped, see Config
 
-`vendor` and `cve` are mutually exclusive with the day window; if neither is
-given we browse the recent window. `min_score` refines the vendor/day modes (it's
-a sort-key condition, so it stays a single Query). Anything that would require a
-Scan is rejected with 400 rather than served slowly.
+`q` searches the TERMS table, not the vendor index. The CVE table indexes one
+vendor per CVE, so `vendor=microsoft` could never find a CVE by its product —
+"azure" and "gcp" matched nothing at all. The terms table holds a row per
+searchable word (see terms.py), which is a strict superset of the vendor names,
+so `vendor=` is kept as an alias for `q=` and now returns more, not less. A
+multi-word query is INTERSECTED across its words, so "microsoft azure" narrows.
+
+`q` and `cve` are mutually exclusive with the day window; if neither is given we
+browse the recent window. `min_score` refines the term/day modes (it's a
+sort-key condition, so it stays a single Query per term). Anything that would
+require a Scan is rejected with 400 rather than served slowly.
 """
 
 import json
@@ -35,9 +42,11 @@ from boto3.dynamodb.conditions import Key
 try:
     from config import Config
     from ranking_handler import _utcnow
+    from terms import query_terms
 except ImportError:  # pragma: no cover - local/dev path
     from src.config import Config
     from src.ranking_handler import _utcnow
+    from src.terms import query_terms
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -65,6 +74,12 @@ class BadRequest(Exception):
 def _table():
     return boto3.resource("dynamodb", region_name=Config.AWS_REGION).Table(
         Config.CVE_TABLE
+    )
+
+
+def _terms_table():
+    return boto3.resource("dynamodb", region_name=Config.AWS_REGION).Table(
+        Config.TERMS_TABLE
     )
 
 
@@ -109,16 +124,54 @@ def _lookup_cve(cve_id):
     return [item] if item else []
 
 
-def _query_vendor(vendor, min_score, limit):
-    """All CVEs for one vendor, worst-first: one Query on by_vendor."""
-    cond = Key("vendor_key").eq(vendor) & Key("score_sk").gte(Decimal(min_score))
-    resp = _table().query(
-        IndexName="by_vendor",
+def _query_one_term(term, min_score, limit):
+    """All CVEs carrying one search term, worst-first: one Query on by_score."""
+    cond = Key("term").eq(term) & Key("score_sk").gte(Decimal(min_score))
+    resp = _terms_table().query(
+        IndexName="by_score",
         KeyConditionExpression=cond,
         ScanIndexForward=False,  # highest score_sk first
         Limit=limit,
     )
     return resp.get("Items", [])
+
+
+def _has_term(term, cve_ids):
+    """Which of `cve_ids` also carry `term`: one BatchGetItem on the exact keys.
+
+    A membership test, not a second search. Querying the other term and
+    intersecting two top-N lists would silently drop real matches — "microsoft"
+    alone has far more than one page of rows, so a CVE could carry both words and
+    still miss the cut on the second list. (term, cve_id) is the table's full
+    key, so asking for exactly these rows is one request and always right.
+    """
+    keys = [{"term": term, "cve_id": cve_id} for cve_id in cve_ids if cve_id]
+    if not keys:
+        return set()
+    resp = boto3.resource("dynamodb", region_name=Config.AWS_REGION).batch_get_item(
+        RequestItems={
+            Config.TERMS_TABLE: {"Keys": keys, "ProjectionExpression": "cve_id"}
+        }
+    )
+    found = resp.get("Responses", {}).get(Config.TERMS_TABLE, [])
+    return {it["cve_id"] for it in found}
+
+
+def _query_terms(terms, min_score, limit):
+    """CVEs matching EVERY given term, worst-first.
+
+    The first term is the search — one Query, already score-ordered and carrying
+    every display field. Each further term only narrows that page, so
+    "microsoft azure" returns CVEs carrying both words rather than everything
+    Microsoft ships.
+    """
+    rows = _query_one_term(terms[0], min_score, limit)
+    for term in terms[1:]:
+        if not rows:
+            break
+        keep = _has_term(term, [it.get("cve_id") for it in rows])
+        rows = [it for it in rows if it.get("cve_id") in keep]
+    return rows
 
 
 def _query_recent(days, min_score, limit):
@@ -153,13 +206,23 @@ def _search(params):
     min_score = _int(params, "min_score", 0, 0, 100)
 
     cve = (params.get("cve") or "").strip().upper()
-    vendor = (params.get("vendor") or "").strip().lower()
+    # `vendor` is the old name for this parameter, kept so existing links and the
+    # cached edge responses keep working; both now search terms, not the vendor
+    # index.
+    text = (params.get("q") or params.get("vendor") or "").strip()
 
     if cve:
         return _lookup_cve(cve), {"cve": cve}
-    if vendor:
-        return _query_vendor(vendor, min_score, limit), {
-            "vendor": vendor,
+    if text:
+        terms = query_terms(text)
+        if not terms:
+            # Everything the user typed was punctuation or a stopword — there is
+            # no term to query, and falling through to the day window would
+            # silently answer a different question.
+            return [], {"q": text, "terms": [], "min_score": min_score, "limit": limit}
+        return _query_terms(terms, min_score, limit), {
+            "q": text,
+            "terms": terms,
             "min_score": min_score,
             "limit": limit,
         }

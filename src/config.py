@@ -86,6 +86,14 @@ class Config:
     # skipped, which keeps local runs and any not-yet-migrated env working.
     CVE_TABLE = os.getenv("CVE_TABLE")
 
+    # Search-terms table: one small row per (search term -> CVE), so the site can
+    # be searched by PRODUCT ("azure", "gcp", "jfrog") and not just by the single
+    # primary vendor CVE_TABLE indexes. DynamoDB can't index a multi-valued
+    # attribute, which is why this is its own table rather than another GSI. Also
+    # derived — rebuildable from the analysis bucket via the analyzer backfill.
+    # Unset means "skip the term rows", keeping local runs working.
+    TERMS_TABLE = os.getenv("TERMS_TABLE")
+
     # Search endpoint: the read-only query Lambda behind the site's filter panel
     # (search_handler.py). It Queries the CVE_TABLE above by vendor or recent-day
     # window, so it needs no bucket access. These bound what a visitor can ask
@@ -111,13 +119,19 @@ class Config:
         os.getenv("RANKING_FIRST_RUN_LOOKBACK_HOURS", "24")
     )
 
-    # Dashboard data publisher: writes the static site's summary JSON (the top-N
-    # LoopScore CVEs the bar chart reads) to the SITE bucket, same-origin with
-    # index.html. Reuses RANKING_TOP_N, but ranks a fixed lookback window (not the
-    # alert's "since last alert" delta) so the chart always shows a full top-N.
+    # Dashboard data publisher: writes the static site's summary JSON to the SITE
+    # bucket, same-origin with index.html. It publishes SEVERAL timeframes and a
+    # daily trend in one object, so the page's timeframe/top-N buttons re-render
+    # from data it already has instead of making a request per click.
+    #
+    # DASHBOARD_WINDOWS are day counts (1 = today), each carrying up to
+    # DASHBOARD_MAX_N CVEs — the largest the chart offers. DASHBOARD_TREND_DAYS
+    # is the length of the per-day count series behind the sparkline.
     SITE_BUCKET = os.getenv("SITE_BUCKET")
-    DASHBOARD_KEY = os.getenv("DASHBOARD_KEY", "data/top10.json")
-    DASHBOARD_LOOKBACK_HOURS = int(os.getenv("DASHBOARD_LOOKBACK_HOURS", "24"))
+    DASHBOARD_KEY = os.getenv("DASHBOARD_KEY", "data/dashboard.json")
+    DASHBOARD_MAX_N = int(os.getenv("DASHBOARD_MAX_N", "50"))
+    DASHBOARD_TREND_DAYS = int(os.getenv("DASHBOARD_TREND_DAYS", "30"))
+    DASHBOARD_WINDOWS = os.getenv("DASHBOARD_WINDOWS", "1,7,30")
 
     # Broadcast script: twice-daily (9am/1pm ET) news script written by Bedrock
     # from the scored CVEs plus the EDGAR breach filings, emailed via SNS. Uses a

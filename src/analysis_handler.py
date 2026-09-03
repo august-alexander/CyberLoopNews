@@ -5,8 +5,10 @@ Writes analysis/<cve-id>.json to the per-environment analysis bucket
 CVE overwrites its object (idempotent).
 
 Each scored CVE is also mirrored into the CVE_TABLE DynamoDB read-model so the
-site can Query it by day or vendor. That mirror is best-effort and derived: the
-S3 object stays the record of truth, and the table is rebuildable from it.
+site can Query it by day or vendor, and into TERMS_TABLE as one row per search
+term (see terms.py) so it can also be found by product name. Both mirrors are
+best-effort and derived: the S3 object stays the record of truth, and both
+tables are rebuildable from it with `{"backfill": true}`.
 
 The handler runs in three modes depending on the event:
   {}  (or an EventBridge scheduled event)  -> BATCH: score every CVE in the
@@ -44,10 +46,12 @@ try:
     from config import Config
     from analyzer import compute_loop_score, score_cve, trim, _priority_for
     from fetcher import fetch_cves_by_last_mod
+    from terms import terms_for
 except ImportError:  # pragma: no cover - local/dev path
     from src.config import Config
     from src.analyzer import compute_loop_score, score_cve, trim, _priority_for
     from src.fetcher import fetch_cves_by_last_mod
+    from src.terms import terms_for
 
 # INFO-level logging so every scored CVE is traceable in CloudWatch. Silence
 # botocore's own INFO chatter so our records stay readable.
@@ -166,12 +170,71 @@ def _item(result):
     return item
 
 
+# The fields a term row carries. It answers a search on its own — the panel
+# renders straight from it — so it holds what search_handler.DISPLAY_FIELDS
+# needs and nothing more. Deliberately NOT the whole item: there is one row per
+# term per CVE, so the model's prevalence/exploitability rationales would be
+# copied a dozen times over for data the site never shows.
+TERM_ROW_FIELDS = (
+    "cve_id",
+    "vendors",
+    "loop_score",
+    "priority",
+    "severity",
+    "cvss",
+    "published",
+    "summary",
+)
+
+
+def _term_rows(result):
+    """One row per search term for this CVE: {term, cve_id, score_sk, ...fields}.
+
+    Keyed (term, cve_id) rather than by score, so a rescore OVERWRITES the row it
+    wrote last time. Keying on the score would leave the old row behind at the
+    old score every time a CVE is rescored, and the site would show it twice.
+    Ordering is the by_score LSI's job instead.
+    """
+    score = result.get("loop_score")
+    base = {k: result.get(k) for k in TERM_ROW_FIELDS if result.get(k) is not None}
+    base = json.loads(json.dumps(base), parse_float=Decimal)
+    base["score_sk"] = Decimal(str(score)) if score is not None else Decimal(UNSCORED_SK)
+    return [dict(base, term=term) for term in terms_for(result)]
+
+
+def _mirror_terms(result):
+    """Write this CVE's search-term rows, if a terms table is configured.
+
+    Best-effort like the main mirror below, and for the same reason. Batched so a
+    dozen terms cost one request.
+    """
+    if not Config.TERMS_TABLE:
+        return 0
+    rows = _term_rows(result)
+    if not rows:
+        return 0
+    try:
+        table = boto3.resource("dynamodb", region_name=Config.AWS_REGION).Table(
+            Config.TERMS_TABLE
+        )
+        with table.batch_writer() as batch:
+            for row in rows:
+                batch.put_item(Item=row)
+        return len(rows)
+    except Exception:
+        logger.exception("term mirror failed for %s (S3 copy is intact)", result["cve_id"])
+        return 0
+
+
 def _mirror(result):
     """Mirror one scored result into the CVE table, if one is configured.
 
     Best-effort on purpose: the S3 object is already written and is the record
     of truth, so a table hiccup must not fail the batch or re-pay Bedrock. Any
     item lost here comes back with an analyzer backfill.
+
+    The search-term rows ride along here so every write path — batch, manual,
+    rescore, backfill — keeps them in step with the item they describe.
     """
     if not Config.CVE_TABLE:
         return False
@@ -180,10 +243,11 @@ def _mirror(result):
             Config.CVE_TABLE
         )
         table.put_item(Item=_item(result))
-        return True
     except Exception:
         logger.exception("dynamo mirror failed for %s (S3 copy is intact)", result["cve_id"])
         return False
+    _mirror_terms(result)
+    return True
 
 
 def _already_scored(s3, cve_id):
@@ -244,7 +308,7 @@ def _run_batch(s3):
 
 
 def _run_backfill(s3, context, start_after=""):
-    """Mirror already-scored analysis/ objects into the CVE table.
+    """Mirror already-scored analysis/ objects into the CVE and terms tables.
 
     This is the rebuild path the table's design depends on. It exists because
     the batch run can never populate the table retroactively: _already_scored()
