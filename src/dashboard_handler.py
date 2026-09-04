@@ -11,6 +11,11 @@ WHAT IT PUBLISHES (and why it's one object):
              from data it already holds instead of a fetch per click.
   days     — CVEs published per day over DASHBOARD_TREND_DAYS, for the sparkline.
   last_24h — a rolling 24-hour count, the "is today a flood?" number.
+  filings  — every SEC breach disclosure we hold, for the site's Filings page.
+             A different feed from a different bucket (see _filings), folded into
+             this object rather than published beside it: it is a couple of KB,
+             it refreshes on the same hourly beat, and one file means the page
+             switches between its two views with no second request.
 
 WHERE THE DATA COMES FROM: the by_day index on the CVE table, the same index
 search_handler._query_recent uses. This Lambda used to list analysis/ in S3 and
@@ -33,6 +38,7 @@ Manual override (for testing):
 
 import json
 import logging
+import re
 from datetime import timedelta
 from decimal import Decimal
 
@@ -56,6 +62,83 @@ logging.getLogger("botocore").setLevel(logging.WARNING)
 # daily counts are "how many CVEs landed", scored or not.
 SK_ANY = Decimal(-1)
 SK_SCORED = Decimal(0)
+
+
+# EDGAR's display_name is a blob: "EMERA INC  (EMA, EMICF)  (CIK 0001127248)".
+# The fields are separated by RUNS of whitespace, which is what this splits on —
+# a single space is part of a company's name, two or more is a delimiter.
+_DISPLAY_SPLIT = re.compile(r"\s{2,}")
+
+
+def _company(display_name):
+    """('Company name', 'TICKERS') from EDGAR's display_name blob.
+
+    The CIK trailer is dropped — it is already its own field on the filing — and
+    the ticker group is optional, since plenty of filers have no listed ticker.
+    An unrecognised shape degrades to the whole string as the name, which is
+    exactly what the daily report already prints.
+    """
+    parts = [p for p in _DISPLAY_SPLIT.split(display_name or "") if p.strip()]
+    if not parts:
+        return "(unknown)", ""
+    tickers = next(
+        (p.strip("() ") for p in parts[1:] if p.startswith("(") and "CIK" not in p), ""
+    )
+    return parts[0].strip(), tickers
+
+
+def _filings(s3):
+    """Every SEC breach disclosure we hold, newest first, deduped by accession.
+
+    WHY THE WHOLE HISTORY: the 8-K and 6-K fetchers each write one dump per day
+    (edgar/<ts>/filings.json, edgar6k/<ts>/filings.json) covering only that day.
+    Item 1.05 disclosures arrive a handful of times a MONTH, so nearly every dump
+    is empty and "the latest dump" would render a blank page on almost every day
+    of the year. Merging the full history is what makes the page real.
+
+    That is affordable precisely BECAUSE the feed is so quiet: two months of
+    dumps is ~120 small GETs and under ten filings, so there is nothing here to
+    window, cap or paginate — the answer is the entire dataset, a few KB of it.
+    If Item 1.05 volume ever changed by an order of magnitude this would need a
+    bound; at a filing a week it would be machinery guarding nothing.
+
+    Accession number is the dedup key. A filing stays inside the fetcher's
+    lookback for several runs and so appears in several dumps, while a company
+    amending an earlier disclosure files a NEW accession — so amendments
+    correctly stay their own row instead of overwriting the original.
+    """
+    filings = {}
+    for form, prefix in (("8-K", Config.EDGAR_PREFIX), ("6-K", Config.EDGAR_6K_PREFIX)):
+        pages = s3.get_paginator("list_objects_v2").paginate(
+            Bucket=Config.S3_BUCKET, Prefix=prefix
+        )
+        for page in pages:
+            for obj in page.get("Contents", []):
+                if not obj["Key"].endswith("/filings.json"):
+                    continue
+                try:
+                    body = s3.get_object(Bucket=Config.S3_BUCKET, Key=obj["Key"])["Body"]
+                    payload = json.loads(body.read())
+                except Exception:
+                    logger.exception("skipping unreadable EDGAR dump %s", obj["Key"])
+                    continue
+                for filing in payload.get("filings") or []:
+                    accession = filing.get("accession")
+                    if not accession:
+                        continue
+                    company, tickers = _company(filing.get("company"))
+                    filings[accession] = {
+                        "form": form,
+                        "company": company,
+                        "tickers": tickers,
+                        "cik": filing.get("cik"),
+                        "file_date": filing.get("file_date"),
+                        # 6-K has no item structure at all (see edgar_6k_fetcher),
+                        # so this is empty for every one of them by design.
+                        "items": filing.get("items") or [],
+                        "url": filing.get("url"),
+                    }
+    return sorted(filings.values(), key=lambda f: f.get("file_date") or "", reverse=True)
 
 
 def _vendor(result):
@@ -188,10 +271,20 @@ def lambda_handler(event, context):
     span = max([trend_days] + sizes)
 
     table = boto3.resource("dynamodb", region_name=Config.AWS_REGION).Table(Config.CVE_TABLE)
+    s3 = boto3.client("s3", region_name=Config.AWS_REGION)
     day_keys = _days_back(now, span)
 
     per_day = {day: _top_for_day(table, day, limit) for day in day_keys}
     counts = {day: _count_for_day(table, day) for day in day_keys[:trend_days]}
+
+    # Best-effort: the breach desk is a second feed from a second bucket, and it
+    # must not be able to take the CVE charts down with it. A failure here costs
+    # one empty page for an hour; raising would cost the whole dashboard.
+    try:
+        filings = _filings(s3)
+    except Exception:
+        logger.exception("could not read EDGAR filings; publishing an empty list")
+        filings = []
 
     payload = {
         "generated_at": now.isoformat(),
@@ -199,9 +292,9 @@ def lambda_handler(event, context):
         # Oldest first: a sparkline reads left-to-right through time.
         "days": [{"day": d, "count": counts[d]} for d in reversed(day_keys[:trend_days])],
         "windows": _windows(per_day, day_keys, sizes, limit),
+        "filings": filings,
     }
 
-    s3 = boto3.client("s3", region_name=Config.AWS_REGION)
     s3.put_object(
         Bucket=Config.SITE_BUCKET,
         Key=Config.DASHBOARD_KEY,
@@ -211,12 +304,14 @@ def lambda_handler(event, context):
     )
     written = {w: len(rows) for w, rows in payload["windows"].items()}
     logger.info(
-        "wrote s3://%s/%s — windows=%s last_24h=%d trend=%dd",
-        Config.SITE_BUCKET, Config.DASHBOARD_KEY, written, payload["last_24h"], trend_days,
+        "wrote s3://%s/%s — windows=%s last_24h=%d trend=%dd filings=%d",
+        Config.SITE_BUCKET, Config.DASHBOARD_KEY, written, payload["last_24h"],
+        trend_days, len(filings),
     )
     return {
         "key": Config.DASHBOARD_KEY,
         "windows": written,
         "last_24h": payload["last_24h"],
         "trend_days": trend_days,
+        "filings": len(filings),
     }

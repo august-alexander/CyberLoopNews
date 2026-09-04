@@ -15,7 +15,7 @@
       background: radial-gradient(1200px 600px at 50% -10%, #12203a 0%, #0a0f1c 55%, #070b14 100%);
       color: #e6edf7;
       text-align: center;
-      padding: 2rem;
+      padding: 4.5rem 2rem 2rem; /* top clears the fixed menu button */
     }
     .badge {
       display: inline-block;
@@ -60,6 +60,35 @@
       70%  { box-shadow: 0 0 0 10px rgba(34,197,94,0); }
       100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
     }
+
+    /* --- hamburger menu ---
+       The pages are sections of THIS file, switched by hash (see the router at
+       the bottom). One file means every page inherits the styles below for free
+       and the deploy stays a single S3 object. */
+    .topbar { position: fixed; top: 0; left: 0; z-index: 10; padding: 0.9rem; text-align: left; }
+    .burger {
+      width: 2.5rem; height: 2.5rem; padding: 0 0.55rem; cursor: pointer;
+      display: grid; align-content: center; gap: 5px;
+      background: #0f1626; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+    }
+    .burger span { display: block; height: 2px; border-radius: 1px; background: #9fb0c7; }
+    .burger:hover span { background: #e6edf7; }
+    .burger:focus-visible { outline: 2px solid #4f8cff; outline-offset: 2px; }
+    #nav {
+      display: flex; flex-direction: column; min-width: 11rem;
+      margin-top: 0.4rem; padding: 0.35rem;
+      background: #0f1626; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+    }
+    /* An author `display` beats the UA stylesheet's [hidden] rule, so the flex
+       above would keep the menu on screen no matter what .hidden was set to.
+       This is what actually closes it. */
+    #nav[hidden] { display: none; }
+    #nav a {
+      padding: 0.5rem 0.7rem; border-radius: 8px;
+      font-size: 0.9rem; color: #9fb0c7; text-decoration: none;
+    }
+    #nav a:hover { background: #16233c; color: #e6edf7; }
+    #nav a[aria-current] { background: #1b2c4a; color: #e6edf7; font-weight: 600; }
 
     /* --- cards --- */
     .card {
@@ -199,6 +228,12 @@
     /* Unscored is a missing measurement, not a low one — hollow and dashed so it
        never reads as "we assessed this and it's fine". */
     .pill.unscored { color: #6b7c96; background: none; border-style: dashed; border-color: rgba(159,176,199,0.35); }
+    /* Form badges on the Filings page. Deliberately NOT the .p1-.p4 hues: a
+       filing carries no LoopScore, and borrowing a priority colour would imply
+       a severity nobody assigned. */
+    .pill.form8 { color: #9085e9; background: rgba(144,133,233,0.14); border-color: rgba(144,133,233,0.40); }
+    .pill.form6 { color: #6fc8a6; background: rgba(25,158,112,0.16);  border-color: rgba(25,158,112,0.42); }
+    .pill.form8, .pill.form6 { font-size: 0.72rem; min-width: 3rem; letter-spacing: 0.03em; }
     .cve { font-weight: 600; color: #e6edf7; text-decoration: none; }
     .cve:hover { color: #7fb0ff; text-decoration: underline; }
     .vendor { color: #9fb0c7; }
@@ -209,10 +244,24 @@
   </style>
 </head>
 <body>
+  <header class="topbar">
+    <button class="burger" id="burger" type="button"
+            aria-expanded="false" aria-controls="nav" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+    <nav id="nav" hidden>
+      <a href="#/" data-page="dashboard">Dashboard</a>
+      <a href="#/filings" data-page="filings">SEC Filings</a>
+    </nav>
+  </header>
+
   <main>
+    <!-- Hero is shared chrome across pages. Which page you are on is carried by
+         the highlighted nav item and the card's own heading, not by a strapline
+         the router has to rewrite. -->
     <h1>Cyber<span class="accent">LoopNews</span></h1>
 
-    <section class="card trend">
+    <section class="card trend" data-route="dashboard">
       <h2>CVE volume</h2>
       <div class="trend-head">
         <span class="stat">
@@ -225,7 +274,7 @@
            role="img" aria-label="Sparkline of CVEs published per day over the last 30 days"></svg>
     </section>
 
-    <section class="card">
+    <section class="card" data-route="dashboard">
       <h2 id="chartTitle">Top CVEs by LoopScore</h2>
       <div class="controls">
         <span class="seg-label">Published</span>
@@ -247,7 +296,7 @@
       <p class="state">Loading…</p>
     </section>
 
-    <section class="card search">
+    <section class="card search" data-route="dashboard">
       <h2>Search the CVE database</h2>
       <p class="caption">Filter by vendor or product, or look up a CVE by ID · ranked by LoopScore, worst first</p>
       <form class="filters" id="filters">
@@ -283,6 +332,27 @@
       </div>
 
       <div class="results" id="results"></div>
+    </section>
+
+    <section class="card search" data-route="filings" hidden>
+      <h2>SEC breach disclosures</h2>
+      <p class="caption">Every filing we hold · newest first · click a company to read the filing on sec.gov</p>
+
+      <div class="key" role="group" aria-label="What these filings are">
+        <span class="key-item"><span class="pill form8">8-K</span> <b>Item 1.05</b> US filers</span>
+        <span class="key-item"><span class="pill form6">6-K</span> <b>equivalent</b> foreign filers</span>
+        <p class="key-note">
+          Since December 2023 a US public company must report a
+          <strong>material cybersecurity incident</strong> on Form 8-K under Item 1.05,
+          usually within four business days of judging it material. Foreign private
+          issuers have no such item, so their disclosures are picked out of Form 6-K
+          by language instead. This is a company stating on the record that it was
+          breached — a handful arrive in a typical month, so the list is short by
+          nature, not because it is filtered.
+        </p>
+      </div>
+
+      <div class="results" id="filingsList"></div>
     </section>
 
     <span class="pulse"><span class="dot"></span> Pipeline online</span>
@@ -499,6 +569,7 @@
         drawSpark(data.days || []);
         paintSegs();
         drawChart();
+        renderFilings();
       })
       .catch((err) => {
         document.querySelector(".state").textContent = "Could not load data (" + err.message + ")";
@@ -595,6 +666,89 @@
 
     form.addEventListener("submit", (e) => { e.preventDefault(); search(); });
     search(); // initial load: browse the recent window
+  </script>
+
+  <script>
+    // --- SEC filings page + the hash router that switches between pages ---
+    //
+    // Pages are sections of this one file, shown and hidden by hash. That is the
+    // whole router: no build step, no framework, no second document to keep in
+    // sync, and the deploy is still `terraform apply` re-uploading one object.
+    //
+    // The filings themselves ride along in dashboard.json (dashboard_handler
+    // publishes them), so this page costs no extra request — DATA is already
+    // loaded, or is on its way and the fetch above calls back in here.
+
+    const NAV = document.getElementById("nav");
+    const BURGER = document.getElementById("burger");
+
+    function renderFilings() {
+      const box = document.getElementById("filingsList");
+      if (!DATA) { box.innerHTML = '<p class="empty">Loading…</p>'; return; }
+
+      const rows = DATA.filings || [];
+      if (!rows.length) {
+        box.innerHTML = '<p class="empty">No breach disclosures on file yet.</p>';
+        return;
+      }
+      // Same escaping rule as the CVE rows: company names and URLs come from
+      // EDGAR, so nothing reaches innerHTML unescaped.
+      box.innerHTML =
+        `<p class="results-meta">${rows.length} disclosure${rows.length === 1 ? "" : "s"} on file</p>` +
+        rows.map((f) => {
+          const name = esc(f.company);
+          const line = [
+            f.items && f.items.length ? "Item " + f.items.map(esc).join(", ") : "",
+            f.file_date ? "filed " + esc(f.file_date) : "",
+          ].filter(Boolean).join(" · ");
+          // A filing without a resolvable primary-document URL still deserves a
+          // row — the company and the date are the story; the link is a bonus.
+          const title = f.url
+            ? `<a class="cve" href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${name}</a>`
+            : `<span class="cve">${name}</span>`;
+          return `<article class="row">
+            <div class="row-main">
+              <span class="pill ${f.form === "6-K" ? "form6" : "form8"}"
+                    title="Form ${esc(f.form)}">${esc(f.form)}</span>
+              ${title}
+              ${f.tickers ? `<span class="vendor">${esc(f.tickers)}</span>` : ""}
+              <span class="meta">${line}</span>
+            </div>
+          </article>`;
+        }).join("");
+    }
+
+    const setMenu = (open) => {
+      NAV.hidden = !open;
+      BURGER.setAttribute("aria-expanded", String(open));
+    };
+
+    function route() {
+      // Anything unrecognised falls back to the dashboard, so a stale or
+      // hand-typed hash can never leave the page blank.
+      const page = location.hash === "#/filings" ? "filings" : "dashboard";
+      document.querySelectorAll("[data-route]").forEach((sec) => {
+        sec.hidden = sec.dataset.route !== page;
+      });
+      document.querySelectorAll("#nav a").forEach((a) => {
+        // aria-current takes the token "page" or nothing at all — "false" would
+        // announce every link as current.
+        if (a.dataset.page === page) a.setAttribute("aria-current", "page");
+        else a.removeAttribute("aria-current");
+      });
+      setMenu(false);
+      if (page === "filings") renderFilings();
+    }
+
+    BURGER.addEventListener("click", () => setMenu(NAV.hidden));
+    // Click-away and Escape both close it — a menu with no way out but a second
+    // click on the button is a menu people leave open.
+    document.addEventListener("click", (e) => {
+      if (!NAV.hidden && !e.target.closest(".topbar")) setMenu(false);
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMenu(false); });
+    window.addEventListener("hashchange", route);
+    route();
   </script>
 </body>
 </html>

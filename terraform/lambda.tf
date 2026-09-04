@@ -415,6 +415,9 @@ resource "aws_lambda_function" "dashboard" {
       CVE_TABLE            = aws_dynamodb_table.cves.name # ranked/counted off by_day
       SITE_BUCKET          = aws_s3_bucket.site.id        # the dashboard's JSON lands here
       DASHBOARD_KEY        = "data/dashboard.json"
+      S3_BUCKET            = var.s3_bucket_name # EDGAR dumps live here, same as the broadcast reads
+      EDGAR_PREFIX         = "edgar/"
+      EDGAR_6K_PREFIX      = "edgar6k/"
       DASHBOARD_MAX_N      = var.dashboard_max_n
       DASHBOARD_TREND_DAYS = var.dashboard_trend_days
       DASHBOARD_WINDOWS    = var.dashboard_windows

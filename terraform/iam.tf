@@ -309,8 +309,14 @@ resource "aws_iam_role_policy" "red_alert" {
 # ---------------------------------------------------------------------------
 # Dashboard publisher role: read the scored CVEs from the read-model index and
 # write ONE summary object into the site bucket for the static dashboard. Narrow
-# like the ranking role — no Bedrock, no raw data bucket, no SNS, no S3 read at
-# all; the only write is scoped to the site bucket's data/ prefix.
+# like the ranking role — no Bedrock, no SNS, and the only write is scoped to the
+# site bucket's data/ prefix.
+#
+# It does now hold ONE read, added when the summary object grew a `filings` key
+# for the site's Filings page: GetObject on the data bucket's two EDGAR prefixes
+# and nothing else. That is deliberately narrower than the bucket — the raw NVD
+# scans and the enricher's CNA records sit in the same bucket under raw/ and
+# cna/, and this role has no business reading either.
 # ---------------------------------------------------------------------------
 resource "aws_iam_role" "dashboard" {
   name               = "${local.name_prefix}-dashboard-role"
@@ -338,6 +344,34 @@ data "aws_iam_policy_document" "dashboard_permissions" {
     sid       = "DynamoQueryByDay"
     actions   = ["dynamodb:Query"]
     resources = ["${aws_dynamodb_table.cves.arn}/index/by_day"]
+  }
+
+  # Read the EDGAR 8-K/6-K dumps that back the Filings page. The data bucket is
+  # created outside this stack (it is referenced by name), so its ARN is built
+  # here — same as the broadcast role does.
+  statement {
+    sid     = "S3ReadEdgar"
+    actions = ["s3:GetObject"]
+    resources = [
+      "arn:aws:s3:::${var.s3_bucket_name}/edgar/*",
+      "arn:aws:s3:::${var.s3_bucket_name}/edgar6k/*",
+    ]
+  }
+
+  # ListBucket is a BUCKET-level action, so it cannot be scoped by a resource ARN
+  # the way the GetObject above is — the prefix condition is the only thing that
+  # narrows it. Without this the role could enumerate raw/ and cna/ too, which is
+  # the whole keyspace of the CVE pipeline.
+  statement {
+    sid       = "S3ListEdgar"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${var.s3_bucket_name}"]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["edgar/*", "edgar6k/*"]
+    }
   }
 
   # Publish the summary JSON — narrow write to the site bucket's data/ prefix only.
