@@ -17,24 +17,16 @@ hypothetical risk), which produced mostly false positives. The active phrase
 keeps real breach disclosures and drops the boilerplate.
 """
 
-import json
-import urllib.parse
-import urllib.request
-
 # Reuse the shared EDGAR helpers from the 8-K fetcher (same API, same hit shape).
+# Paging, record shape and accession dedup are identical for both forms — only
+# the SELECTOR differs, and that difference is the whole point of this module.
 try:
-    from edgar_fetcher import _filing_url, _parse_cik
+    from edgar_fetcher import _dedupe, _paged_hits, _record
 except ImportError:  # pragma: no cover - local/dev path
-    from src.edgar_fetcher import _filing_url, _parse_cik
+    from src.edgar_fetcher import _dedupe, _paged_hits, _record
 
 FTS_QUERY = '"experienced a cybersecurity incident"'
 FORM_TYPE = "6-K"
-
-
-def _request(url, user_agent, timeout=30):
-    req = urllib.request.Request(url, headers={"User-Agent": user_agent})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
 
 
 def fetch_incident_filings(base_url, user_agent, start, end):
@@ -47,9 +39,13 @@ def fetch_incident_filings(base_url, user_agent, start, end):
         start / end: datetime objects; only the date component is used.
 
     Returns:
-        (total_hits, filings) where filings is a list of normalized dicts:
-        {company, cik, file_date, form, accession, url}. There is no item filter
-        (6-K has no items) — the full-text phrase is the only selector.
+        (total_hits, filings) where filings is a list of normalized dicts,
+        deduped by accession. There is no item filter (6-K has no items) — the
+        full-text phrase is the only selector, so unlike the 8-K feed there is
+        no exact field to fall back on and the phrase choice IS the precision.
+
+    Dedup matters more here than on the 8-K side: a 6-K carries its substance in
+    exhibits, so one filing routinely matches on several documents at once.
     """
     params = {
         "q": FTS_QUERY,
@@ -57,25 +53,5 @@ def fetch_incident_filings(base_url, user_agent, start, end):
         "startdt": start.strftime("%Y-%m-%d"),
         "enddt": end.strftime("%Y-%m-%d"),
     }
-    url = f"{base_url}?{urllib.parse.urlencode(params)}"
-    data = _request(url, user_agent)
-
-    hits = data.get("hits", {}).get("hits", [])
-    filings = []
-    for hit in hits:
-        source = hit.get("_source", {})
-        names = source.get("display_names", [])
-        company = names[0] if names else "(unknown)"
-        filings.append(
-            {
-                "company": company,
-                "cik": _parse_cik(company) if names else None,
-                "file_date": source.get("file_date"),
-                "form": source.get("form", FORM_TYPE),
-                "accession": hit.get("_id", "").partition(":")[0],
-                "url": _filing_url(hit),
-            }
-        )
-
-    total = data.get("hits", {}).get("total", {}).get("value", len(filings))
-    return total, filings
+    hits, total = _paged_hits(base_url, user_agent, params)
+    return total, _dedupe(_record(hit, FORM_TYPE) for hit in hits)

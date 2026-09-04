@@ -128,7 +128,11 @@ def _filings(s3):
                         continue
                     company, tickers = _company(filing.get("company"))
                     filings[accession] = {
-                        "form": form,
+                        # The filing's OWN form where the fetcher recorded one,
+                        # so an amendment reads "8-K/A" rather than "8-K". Dumps
+                        # written before the fetchers stored it fall back to the
+                        # prefix the dump came from.
+                        "form": filing.get("form") or form,
                         "company": company,
                         "tickers": tickers,
                         "cik": filing.get("cik"),
@@ -136,6 +140,7 @@ def _filings(s3):
                         # 6-K has no item structure at all (see edgar_6k_fetcher),
                         # so this is empty for every one of them by design.
                         "items": filing.get("items") or [],
+                        "location": filing.get("location"),
                         "url": filing.get("url"),
                     }
     return sorted(filings.values(), key=lambda f: f.get("file_date") or "", reverse=True)

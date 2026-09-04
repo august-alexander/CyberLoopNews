@@ -234,6 +234,10 @@
     .pill.form8 { color: #9085e9; background: rgba(144,133,233,0.14); border-color: rgba(144,133,233,0.40); }
     .pill.form6 { color: #6fc8a6; background: rgba(25,158,112,0.16);  border-color: rgba(25,158,112,0.42); }
     .pill.form8, .pill.form6 { font-size: 0.72rem; min-width: 3rem; letter-spacing: 0.03em; }
+    /* An amendment revises an earlier disclosure. Dashed, like the unscored CVE
+       pill, because in both cases the badge is saying "this is not the whole
+       story" rather than naming a different category. */
+    .pill.amended { border-style: dashed; min-width: 3.6rem; }
     .cve { font-weight: 600; color: #e6edf7; text-decoration: none; }
     .cve:hover { color: #7fb0ff; text-decoration: underline; }
     .vendor { color: #9fb0c7; }
@@ -337,6 +341,25 @@
     <section class="card search" data-route="filings" hidden>
       <h2>SEC breach disclosures</h2>
       <p class="caption">Every filing we hold · newest first · click a company to read the filing on sec.gov</p>
+
+      <!-- Filtering happens in the browser: the whole archive is ~30 KB and is
+           already in memory, so there is nothing to query and no reason to make
+           the user press a button. -->
+      <form class="filters" id="filingFilters" role="search">
+        <input id="fq" type="search" autocomplete="off"
+               placeholder="Company, ticker or location (e.g. amgen, AMGN, AL)" />
+        <select id="fform" aria-label="Form type">
+          <option value="">All forms</option>
+          <option value="8-K">8-K · US filers</option>
+          <option value="6-K">6-K · foreign filers</option>
+        </select>
+        <select id="fyear" aria-label="Year filed">
+          <option value="">All years</option>
+        </select>
+      </form>
+      <p class="hint">Filters as you type. Locations are EDGAR's own "City, ST" form, so use the
+        two-letter state code. 8-K covers amendments (8-K/A) too — those revise an earlier
+        disclosure and are usually where the real impact is stated.</p>
 
       <div class="key" role="group" aria-label="What these filings are">
         <span class="key-item"><span class="pill form8">8-K</span> <b>Item 1.05</b> US filers</span>
@@ -682,23 +705,76 @@
     const NAV = document.getElementById("nav");
     const BURGER = document.getElementById("burger");
 
+    // The archive is small and fully in memory, so a filter is a plain
+    // Array.filter — no request, no debounce, no pagination.
+    // Lowercase and split on anything that isn't a letter or digit, so
+    // "GREENPOWER MOTOR Co INC." and "Prattville, AL" both reduce to words.
+    const tokens = (text) =>
+      String(text || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+    function filterFilings(rows) {
+      const terms = tokens(document.getElementById("fq").value);
+      const form = document.getElementById("fform").value;
+      const year = document.getElementById("fyear").value;
+      return rows.filter((f) => {
+        // "8-K" must also select "8-K/A": an amendment is the same filing being
+        // updated, and hiding it behind its own filter value would mean the
+        // obvious choice silently drops a quarter of the 8-K archive.
+        if (form && !String(f.form || "").startsWith(form)) return false;
+        if (year && String(f.file_date || "").slice(0, 4) !== year) return false;
+        if (!terms.length) return true;
+        // Match on WORD PREFIXES, not raw substrings. A plain `includes` made
+        // short queries useless — "AL" (the state code) also matched "GLOBAL"
+        // and "Alpha", returning half the archive. Every typed term has to
+        // start some word in the filing, so multiple words narrow.
+        const words = tokens([f.company, f.tickers, f.location, f.form].join(" "));
+        return terms.every((t) => words.some((w) => w.startsWith(t)));
+      });
+    }
+
+    // Year options come from the data, so the list can never offer a year with
+    // nothing behind it.
+    function fillYears(rows) {
+      const sel = document.getElementById("fyear");
+      if (sel.options.length > 1) return; // already built
+      const years = [...new Set(rows.map((f) => String(f.file_date || "").slice(0, 4)).filter(Boolean))]
+        .sort().reverse();
+      for (const y of years) {
+        const o = document.createElement("option");
+        o.value = o.textContent = y;
+        sel.appendChild(o);
+      }
+    }
+
     function renderFilings() {
       const box = document.getElementById("filingsList");
       if (!DATA) { box.innerHTML = '<p class="empty">Loading…</p>'; return; }
 
-      const rows = DATA.filings || [];
-      if (!rows.length) {
+      const all = DATA.filings || [];
+      if (!all.length) {
         box.innerHTML = '<p class="empty">No breach disclosures on file yet.</p>';
+        return;
+      }
+      fillYears(all);
+      const rows = filterFilings(all);
+      if (!rows.length) {
+        box.innerHTML = '<p class="empty">No filings match those filters.</p>';
         return;
       }
       // Same escaping rule as the CVE rows: company names and URLs come from
       // EDGAR, so nothing reaches innerHTML unescaped.
+      const meta = rows.length === all.length
+        ? `${all.length} disclosures on file`
+        : `${rows.length} of ${all.length} disclosures`;
       box.innerHTML =
-        `<p class="results-meta">${rows.length} disclosure${rows.length === 1 ? "" : "s"} on file</p>` +
+        `<p class="results-meta">${meta}</p>` +
         rows.map((f) => {
           const name = esc(f.company);
+          // Item codes are deliberately NOT shown: every 8-K here is an Item
+          // 1.05 by construction (it is the selector), so printing it on every
+          // row is noise, and 6-K has no items at all.
           const line = [
-            f.items && f.items.length ? "Item " + f.items.map(esc).join(", ") : "",
+            f.location ? esc(f.location) : "",
             f.file_date ? "filed " + esc(f.file_date) : "",
           ].filter(Boolean).join(" · ");
           // A filing without a resolvable primary-document URL still deserves a
@@ -708,8 +784,9 @@
             : `<span class="cve">${name}</span>`;
           return `<article class="row">
             <div class="row-main">
-              <span class="pill ${f.form === "6-K" ? "form6" : "form8"}"
-                    title="Form ${esc(f.form)}">${esc(f.form)}</span>
+              <span class="pill ${String(f.form).startsWith("6-K") ? "form6" : "form8"}${
+                    String(f.form).endsWith("/A") ? " amended" : ""}"
+                    title="Form ${esc(f.form)}${String(f.form).endsWith("/A") ? " — amends an earlier disclosure" : ""}">${esc(f.form)}</span>
               ${title}
               ${f.tickers ? `<span class="vendor">${esc(f.tickers)}</span>` : ""}
               <span class="meta">${line}</span>
@@ -739,6 +816,11 @@
       setMenu(false);
       if (page === "filings") renderFilings();
     }
+
+    // Enter must not submit-and-reload; the filtering is already live.
+    document.getElementById("filingFilters").addEventListener("submit", (e) => e.preventDefault());
+    ["fq", "fform", "fyear"].forEach((id) =>
+      document.getElementById(id).addEventListener("input", renderFilings));
 
     BURGER.addEventListener("click", () => setMenu(NAV.hidden));
     // Click-away and Escape both close it — a menu with no way out but a second

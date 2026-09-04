@@ -9,7 +9,7 @@ Triggered daily by EventBridge, before the reporter runs.
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import boto3
 
@@ -18,9 +18,12 @@ import boto3
 try:
     from config import Config
     from edgar_6k_fetcher import fetch_incident_filings
+    # Same window rules as the 8-K fetcher, including the backfill override.
+    from edgar_handler import _window
 except ImportError:  # pragma: no cover - local/dev path
     from src.config import Config
     from src.edgar_6k_fetcher import fetch_incident_filings
+    from src.edgar_handler import _window
 
 # Same timestamp convention as the CVE and 8-K fetchers' S3 keys.
 KEY_TIMESTAMP_FORMAT = "%Y%m%d%H%M%S"
@@ -46,18 +49,19 @@ def lambda_handler(event, context):
     s3 = boto3.client("s3", region_name=Config.AWS_REGION)
 
     now = _utcnow()
-    start = now - timedelta(days=Config.EDGAR_LOOKBACK_DAYS)
+    start, end = _window(event or {}, now)
 
     total, filings = fetch_incident_filings(
-        Config.EDGAR_FTS_URL, Config.EDGAR_USER_AGENT, start, now
+        Config.EDGAR_FTS_URL, Config.EDGAR_USER_AGENT, start, end
     )
 
     key = _store(s3, Config.S3_BUCKET, now, total, filings)
 
     result = {
         "filing_count": len(filings),
+        "total_hits": total,
         "window_start": start.isoformat(),
-        "window_end": now.isoformat(),
+        "window_end": end.isoformat(),
         "edgar_6k_key": key,
     }
     print(json.dumps(result))
