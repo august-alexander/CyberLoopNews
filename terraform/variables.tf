@@ -46,6 +46,40 @@ variable "dashboard_domain" {
   default     = ""
 }
 
+# The hosted zone that holds the records for dashboard_domain. Normally the same
+# thing, which is why it defaults to empty and falls back to dashboard_domain.
+# It matters when the domain is a SUBdomain: dev is served on
+# dev.cyberloops.net, but the zone is still cyberloops.net — without this
+# Terraform would look up a hosted zone named "dev.cyberloops.net." and fail.
+variable "dns_zone_name" {
+  description = "Route 53 hosted zone holding the records for dashboard_domain. Empty = use dashboard_domain itself (correct for an apex domain)."
+  type        = string
+  default     = ""
+}
+
+# An apex domain wants www.<domain> served off the same distribution; a
+# subdomain does not — "www.dev.cyberloops.net" is noise, and every alias costs
+# a SAN on the cert and a pair of Route 53 records.
+variable "dashboard_include_www" {
+  description = "Also serve www.<dashboard_domain> from the same distribution. True for an apex domain, false for a subdomain."
+  type        = bool
+  default     = true
+}
+
+# Master switch for everything that runs on a timer: the 8 EventBridge rules and
+# the 2 EventBridge Scheduler schedules. The resources are still CREATED when
+# this is false — they are just DISABLED, so the plumbing stays reviewable in
+# state and flipping it back on is a one-line apply with no recreation.
+#
+# Set false for an environment that exists to be developed against rather than
+# to run: it stops duplicate NVD fetches, duplicate Bedrock spend, and duplicate
+# alert mail to the same inbox.
+variable "schedules_enabled" {
+  description = "Whether this environment's scheduled work actually fires. False creates every rule/schedule in a DISABLED state."
+  type        = bool
+  default     = true
+}
+
 variable "output_bucket_name" {
   description = "S3 bucket for per-CVE LoopScore analysis outputs. Created by this stack; set per environment (dev/main) so the branches never share a bucket."
   type        = string

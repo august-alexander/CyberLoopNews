@@ -16,6 +16,7 @@ resource "aws_scheduler_schedule" "ranking" {
 
   schedule_expression          = var.ranking_schedule_expression
   schedule_expression_timezone = var.ranking_timezone
+  state                        = var.schedules_enabled ? "ENABLED" : "DISABLED"
 
   target {
     arn      = aws_lambda_function.ranking.arn
@@ -45,6 +46,7 @@ resource "aws_scheduler_schedule" "broadcast" {
 
   schedule_expression          = "cron(0 ${each.value} * * ? *)"
   schedule_expression_timezone = var.ranking_timezone
+  state                        = var.schedules_enabled ? "ENABLED" : "DISABLED"
 
   target {
     arn      = aws_lambda_function.broadcast.arn

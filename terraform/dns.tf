@@ -14,14 +14,20 @@
 locals {
   use_custom_domain = var.dashboard_domain != ""
 
-  # Serve the apex and www off the same distribution so www.* never 404s.
-  domain_aliases = local.use_custom_domain ? [
-    var.dashboard_domain,
-    "www.${var.dashboard_domain}",
-  ] : []
+  # The zone to write records into. For an apex domain it IS the domain; for a
+  # subdomain (dev.cyberloops.net) the records still live in the parent zone.
+  zone_name = var.dns_zone_name != "" ? var.dns_zone_name : var.dashboard_domain
 
-  # apex/www × A/AAAA -> one alias record each (AAAA needs is_ipv6_enabled on
-  # the distribution, set in frontend.tf). Keyed by "host-type" for for_each.
+  # Serve the apex and www off the same distribution so www.* never 404s. A
+  # subdomain sets dashboard_include_www = false and gets just the one name.
+  domain_aliases = local.use_custom_domain ? concat(
+    [var.dashboard_domain],
+    var.dashboard_include_www ? ["www.${var.dashboard_domain}"] : [],
+  ) : []
+
+  # every alias × A/AAAA -> one alias record each (AAAA needs is_ipv6_enabled on
+  # the distribution, set in frontend.tf). Keyed by "host-type" for for_each, so
+  # dropping www drops its two records and nothing else.
   alias_records = local.use_custom_domain ? {
     for pair in setproduct(local.domain_aliases, ["A", "AAAA"]) :
     "${pair[0]}-${pair[1]}" => { name = pair[0], type = pair[1] }
@@ -32,14 +38,14 @@ locals {
 # managed, so Terraform never risks deleting your zone.
 data "aws_route53_zone" "site" {
   count        = local.use_custom_domain ? 1 : 0
-  name         = "${var.dashboard_domain}."
+  name         = "${local.zone_name}."
   private_zone = false
 }
 
 resource "aws_acm_certificate" "site" {
   count                     = local.use_custom_domain ? 1 : 0
   domain_name               = var.dashboard_domain
-  subject_alternative_names = ["www.${var.dashboard_domain}"]
+  subject_alternative_names = var.dashboard_include_www ? ["www.${var.dashboard_domain}"] : []
   validation_method         = "DNS"
   tags                      = local.tags
 

@@ -2,6 +2,7 @@ resource "aws_cloudwatch_event_rule" "schedule" {
   name                = "${local.name_prefix}-fetcher-schedule"
   description         = "Trigger the CVE fetcher on a schedule."
   schedule_expression = var.schedule_expression
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
   tags                = local.tags
 }
 
@@ -27,6 +28,7 @@ resource "aws_cloudwatch_event_rule" "enrich_schedule" {
   name                = "${local.name_prefix}-enricher-schedule"
   description         = "Trigger the CVE.org vendor/product enricher on a schedule."
   schedule_expression = var.enrich_schedule_expression
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
   tags                = local.tags
 }
 
@@ -50,6 +52,7 @@ resource "aws_cloudwatch_event_rule" "edgar_schedule" {
   name                = "${local.name_prefix}-edgar-fetcher-schedule"
   description         = "Trigger the EDGAR 8-K 1.05 fetcher on a schedule."
   schedule_expression = var.edgar_schedule_expression
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
   tags                = local.tags
 }
 
@@ -73,6 +76,7 @@ resource "aws_cloudwatch_event_rule" "edgar_6k_schedule" {
   name                = "${local.name_prefix}-edgar-6k-fetcher-schedule"
   description         = "Trigger the EDGAR 6-K cyber-incident fetcher on a schedule."
   schedule_expression = var.edgar_6k_schedule_expression
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
   tags                = local.tags
 }
 
@@ -97,6 +101,7 @@ resource "aws_cloudwatch_event_rule" "analysis_schedule" {
   name                = "${local.name_prefix}-analyzer-schedule"
   description         = "Trigger the CVE analyzer on a schedule (batch mode)."
   schedule_expression = var.analysis_schedule_expression
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
   tags                = local.tags
 }
 
@@ -129,6 +134,7 @@ resource "aws_cloudwatch_event_rule" "rescore_schedule" {
   name                = "${local.name_prefix}-analyzer-rescore-schedule"
   description         = "Trigger the analyzer's UNSCORED rescore sweep daily."
   schedule_expression = var.rescore_schedule_expression
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
   tags                = local.tags
 }
 
@@ -156,6 +162,7 @@ resource "aws_cloudwatch_event_rule" "dashboard_schedule" {
   name                = "${local.name_prefix}-dashboard-schedule"
   description         = "Trigger the dashboard data publisher on a schedule."
   schedule_expression = var.dashboard_schedule_expression
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
   tags                = local.tags
 }
 
@@ -179,6 +186,7 @@ resource "aws_cloudwatch_event_rule" "report_schedule" {
   name                = "${local.name_prefix}-reporter-schedule"
   description         = "Trigger the CVE reporter on a schedule."
   schedule_expression = var.report_schedule_expression
+  state               = var.schedules_enabled ? "ENABLED" : "DISABLED"
   tags                = local.tags
 }
 
