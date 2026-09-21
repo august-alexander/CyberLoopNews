@@ -21,12 +21,10 @@ state_key          = "state/last_fetch.json"
 schedule_expression = "cron(0 * * * ? *)" # hourly at :00 — prod is the fresh one now
 lookback_hours      = 24
 
-# Everything that runs on a timer is created but DISABLED until prod has been
-# seeded with dev's data (the S3 sync + analyzer backfill). Until then a live
-# schedule would only accumulate CVEs that the sync overwrites, while spending
-# Bedrock calls and NVD quota and mailing alerts about a half-built site.
-# Flip to true once the seed is done and verified.
-schedules_enabled = false
+# Prod's timers. They were held DISABLED until prod was seeded with dev's data
+# (S3 sync + analyzer backfill, done 2026-09-21); set false to idle prod again
+# without destroying anything.
+schedules_enabled = true
 
 # dashboard_domain is deliberately UNSET until the cutover. CloudFront refuses
 # the same alternate domain name on two distributions, so main cannot claim
