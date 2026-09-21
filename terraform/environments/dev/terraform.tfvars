@@ -22,8 +22,12 @@ state_key          = "state/last_fetch.json"
 schedule_expression = "cron(0 * * * ? *)" # hourly at :00 (small delta per fetch)
 lookback_hours      = 24
 
-# Dashboard custom domain. Points cyberloops.net (+ www) at the dev site for
-# now, since main isn't a site yet — move this line to environments/main when
-# the prod site goes live. Empty string here would fall back to the
-# *.cloudfront.net URL.
-dashboard_domain = "cyberloops.net"
+# Dev is the scratch site for frontend work. It lives on a subdomain whose
+# records sit in the parent cyberloops.net zone; cyberloops.net itself is prod.
+dashboard_domain      = "dev.cyberloops.net"
+dns_zone_name         = "cyberloops.net"
+dashboard_include_www = false
+
+# Nothing in dev runs on a timer; its data is refreshed by invoking the
+# Lambdas by hand when needed.
+schedules_enabled = false

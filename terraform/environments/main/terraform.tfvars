@@ -26,7 +26,5 @@ lookback_hours      = 24
 # without destroying anything.
 schedules_enabled = true
 
-# dashboard_domain is deliberately UNSET until the cutover. CloudFront refuses
-# the same alternate domain name on two distributions, so main cannot claim
-# cyberloops.net until dev releases it. Prod runs on its *.cloudfront.net URL
-# in the meantime.
+# Prod serves the real domain, apex + www (dev is on dev.cyberloops.net).
+dashboard_domain = "cyberloops.net"
