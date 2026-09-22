@@ -39,8 +39,8 @@ logger = logging.getLogger(__name__)
 TARGET_MINUTES = "4-5"
 TARGET_WORDS = "600-750"
 
-# The two daily slots differ in framing, not in content: the 9am show sets up
-# the day, the 1pm show is a mid-day update over an overlapping window. Keyed by
+# The two daily slots differ in framing: the 9am show sets up the day, the 1pm
+# show is a mid-day update covering only what was scored since 9am. Keyed by
 # the `slot` the handler passes in.
 #
 # Each entry also states what the NEXT edition is, because the sign-off asks the
@@ -56,10 +56,11 @@ SLOT_FRAMING = {
         "Eastern today; that is the only thing you may point them to."
     ),
     "midday": (
-        "This is the MIDDAY edition, which airs at 1pm Eastern. The audience may "
-        "have heard the morning show, which covered an overlapping window. Lead "
-        "with what is new or what has developed; reference recurring items "
-        "briefly rather than re-reading them in full. This is the LAST edition "
+        "This is the MIDDAY edition, which airs at 1pm Eastern. The CVEs below "
+        "are only those scored since the morning show; if there are few, keep "
+        "it short rather than padding. The SEC filings refresh once a day, so "
+        "the morning show already read them: mention them briefly rather than "
+        "re-reading them in full. This is the LAST edition "
         "of the day — the next one is tomorrow morning at 9am Eastern. There is "
         "no evening or late edition; never promise one."
     ),
@@ -196,7 +197,7 @@ def _format_material(material):
     lines = [
         "=== TODAY'S DATA ===",
         f"Date: {material.get('date')}",
-        f"Window: the last {material.get('lookback_hours')} hours",
+        f"Window: everything scored since {material.get('window_start')}",
         "",
         f"SCORED CVES ({len(material.get('cves') or [])}, highest LoopScore first):",
     ]

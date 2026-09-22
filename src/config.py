@@ -134,10 +134,10 @@ class Config:
     DASHBOARD_WINDOWS = os.getenv("DASHBOARD_WINDOWS", "1,7,30")
 
     # Broadcast script: twice-daily (9am/1pm ET) news script written by Bedrock
-    # from the scored CVEs plus the EDGAR breach filings, emailed via SNS. Uses a
-    # FIXED lookback rather than the ranking alert's "since last alert" marker —
-    # the two slots are only four hours apart, so a delta window would leave the
-    # midday show with almost nothing.
+    # from the scored CVEs plus the EDGAR breach filings, emailed via SNS. Like the
+    # ranking alert, each edition covers only what was scored since the previous
+    # one, tracked by a marker object (BROADCAST_STATE_KEY) in the analysis
+    # bucket; BROADCAST_LOOKBACK_HOURS is only the first-run look-back.
     #
     # Its own model, NOT the analyzer's BEDROCK_MODEL_ID: the analyzer runs
     # Haiku because it makes ~1200 short scoring calls a day, while the
@@ -147,6 +147,7 @@ class Config:
     BROADCAST_MODEL_ID = os.getenv(
         "BROADCAST_MODEL_ID", "us.anthropic.claude-sonnet-5"
     )
+    BROADCAST_STATE_KEY = os.getenv("BROADCAST_STATE_KEY", "broadcast-state/last_broadcast.json")
     BROADCAST_LOOKBACK_HOURS = int(os.getenv("BROADCAST_LOOKBACK_HOURS", "24"))
     BROADCAST_TOP_N = int(os.getenv("BROADCAST_TOP_N", "8"))
 

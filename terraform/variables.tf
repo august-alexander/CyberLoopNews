@@ -205,7 +205,7 @@ variable "broadcast_model_id" {
 }
 
 variable "broadcast_lookback_hours" {
-  description = "How many hours of scored CVEs the broadcast writer draws on. Fixed window (unlike the ranking alert's delta) because the two slots are only four hours apart; the resulting overlap is handled in the script's framing, not the data."
+  description = "First-run look-back for the broadcast writer, used only when its marker does not exist yet. After that each edition covers only the CVEs scored since the previous edition (same delta pattern as the ranking alert), so nothing is reported twice."
   type        = number
   default     = 24
 }

@@ -10,12 +10,12 @@ Material comes from two places the pipeline already fills:
   - breach filings   edgar/<ts>/filings.json and edgar6k/<ts>/filings.json in
                      the DATA bucket
 
-Window: a fixed BROADCAST_LOOKBACK_HOURS, deliberately NOT the ranking alert's
-"since the last alert" marker. The two daily slots are only four hours apart, so
-a delta window would hand the midday show a nearly empty deck. A fixed window
-means every broadcast has a full deck; the resulting overlap between the 9am and
-1pm editions is handled in the script itself (see SLOT_FRAMING in broadcast.py),
-not by narrowing the data.
+Window: everything scored since the previous edition, the same "since last
+time" marker pattern the ranking alert uses (its own marker object,
+BROADCAST_STATE_KEY). So the 9am show covers 1pm yesterday -> 9am and the 1pm
+show covers 9am -> 1pm, and nothing is reported twice. A quiet four hours makes
+a short midday deck, which is better than repeating the morning's. The very
+first run (no marker yet) looks back BROADCAST_LOOKBACK_HOURS.
 
 Fired by EventBridge Scheduler at 9am and 1pm America/New_York, one schedule per
 slot, each passing its own {"slot": ...} input (see terraform/scheduler.tf). The
@@ -24,8 +24,8 @@ Lambda never has to guess which edition it is.
 
 Manual overrides (for testing):
   {"slot": "morning"|"midday"} -> which edition to write (default: morning)
-  {"lookback_hours": N}        -> gather the last N hours instead
-  {"dry_run": true}            -> return the script WITHOUT emailing it
+  {"lookback_hours": N}        -> gather the last N hours instead (marker untouched)
+  {"dry_run": true}            -> return the script WITHOUT emailing it (marker untouched)
 """
 
 import json
@@ -37,11 +37,11 @@ import boto3
 try:
     from config import Config
     from broadcast import trim_cve, trim_filing, write_script
-    from ranking_handler import _rank, _scored_since, _utcnow
+    from ranking_handler import _load_marker, _rank, _save_marker, _scored_since, _utcnow
 except ImportError:  # pragma: no cover - local/dev path
     from src.config import Config
     from src.broadcast import trim_cve, trim_filing, write_script
-    from src.ranking_handler import _rank, _scored_since, _utcnow
+    from src.ranking_handler import _load_marker, _rank, _save_marker, _scored_since, _utcnow
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -90,17 +90,15 @@ def _latest_filings(s3, bucket, prefix):
     return [trim_filing(f) for f in filings]
 
 
-def _gather(s3, slot, hours, now):
+def _gather(s3, slot, cutoff, now):
     """Assemble everything the writer needs for one broadcast."""
-    cutoff = now - timedelta(hours=hours)
-
     results = _scored_since(s3, Config.OUTPUT_BUCKET, Config.OUTPUT_PREFIX, cutoff)
     ranked = _rank(results, Config.BROADCAST_TOP_N)
 
     return {
         "slot": slot,
         "date": now.strftime("%Y-%m-%d"),
-        "lookback_hours": hours,
+        "window_start": cutoff.strftime("%Y-%m-%d %H:%M UTC"),
         "cves": [trim_cve(r) for r in ranked],
         "filings_8k": _latest_filings(s3, Config.S3_BUCKET, Config.EDGAR_PREFIX),
         "filings_6k": _latest_filings(s3, Config.S3_BUCKET, Config.EDGAR_6K_PREFIX),
@@ -114,12 +112,19 @@ def lambda_handler(event, context):
     now = _utcnow()
 
     slot = event.get("slot") or DEFAULT_SLOT
-    hours = float(event.get("lookback_hours") or Config.BROADCAST_LOOKBACK_HOURS)
 
-    material = _gather(s3, slot, hours, now)
+    # Window boundary: explicit override, else the persisted marker, else the
+    # first-run look-back.
+    if event.get("lookback_hours"):
+        cutoff = now - timedelta(hours=float(event["lookback_hours"]))
+    else:
+        marker = _load_marker(s3, Config.OUTPUT_BUCKET, Config.BROADCAST_STATE_KEY)
+        cutoff = marker or (now - timedelta(hours=Config.BROADCAST_LOOKBACK_HOURS))
+
+    material = _gather(s3, slot, cutoff, now)
     logger.info(
-        "%s edition: %d CVEs on the deck (%d scored in %sh), %d 8-K + %d 6-K filings",
-        slot, len(material["cves"]), material["scored_in_window"], hours,
+        "%s edition: %d CVEs on the deck (%d scored since %s), %d 8-K + %d 6-K filings",
+        slot, len(material["cves"]), material["scored_in_window"], cutoff.isoformat(),
         len(material["filings_8k"]), len(material["filings_6k"]),
     )
 
@@ -135,6 +140,8 @@ def lambda_handler(event, context):
         Subject=f"CyberLoop Broadcast — {SLOT_LABELS.get(slot, slot)}",
         Message=script,
     )
+    if not event.get("lookback_hours"):
+        _save_marker(s3, Config.OUTPUT_BUCKET, Config.BROADCAST_STATE_KEY, now, len(material["cves"]))
 
     result = {
         "sent": True,

@@ -392,7 +392,7 @@ resource "aws_iam_role_policy" "dashboard" {
 # Broadcast writer role: read the scored results AND the EDGAR filings, invoke
 # Bedrock to write the script, publish it to SNS. It is the only role that reads
 # both buckets, because the broadcast is the only job that merges the two feeds.
-# Reads are read-only everywhere — the broadcast writes nothing to S3.
+# Its only S3 write is its own "last edition" marker under broadcast-state/.
 # ---------------------------------------------------------------------------
 resource "aws_iam_role" "broadcast" {
   name               = "${local.name_prefix}-broadcast-role"
@@ -423,6 +423,13 @@ data "aws_iam_policy_document" "broadcast_permissions" {
     sid       = "S3ListAnalysis"
     actions   = ["s3:ListBucket"]
     resources = [aws_s3_bucket.analysis.arn]
+  }
+
+  # Advance the "since the last edition" marker after each send.
+  statement {
+    sid       = "S3WriteMarker"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.analysis.arn}/broadcast-state/*"]
   }
 
   # Read the EDGAR 8-K/6-K dumps for the breach desk. The data bucket is created
