@@ -5,100 +5,113 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CyberLoop — Dashboard</title>
   <style>
-    :root { color-scheme: dark; }
+    :root {
+      color-scheme: dark;
+
+      /* Ink */
+      --ink:      #e8e9ea;
+      --ink-dim:  #9b9ea4;
+      --ink-mute: #6c6f76;
+
+      /* Surfaces. Near-neutral rather than navy: the page is chrome around the
+         data, so it carries no hue of its own and colour means something. */
+      --bg:            #0b0c0e;
+      --surface:       #141518;
+      --surface-2:     #101114;
+      --surface-3:     #26282e;
+      --surface-hover: #1d1f24;
+      --line-grid:     #26282e;
+
+      /* The chart palette's first step, reused as the interface accent so the
+         page chrome and the plots read as one system. */
+      --accent:        #3987e5;
+      --accent-bright: #6ba3ee;
+
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       min-height: 100vh;
-      display: grid;
-      place-items: center;
       font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: radial-gradient(1200px 600px at 50% -10%, #12203a 0%, #0a0f1c 55%, #070b14 100%);
-      color: #e6edf7;
-      text-align: center;
-      padding: 4.5rem 2rem 2rem; /* top clears the fixed menu button */
+      background: var(--bg);
+      color: var(--ink);
+      padding: 0;
     }
-    .badge {
-      display: inline-block;
-      font-size: 0.72rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-      color: #7fb0ff;
-      border: 1px solid #24406e;
-      border-radius: 999px;
-      padding: 0.35rem 0.85rem;
-      margin-bottom: 1.5rem;
+    /* One measure for every page. Wider than the old 44rem card so more rows
+       land above the fold — density is the point of a dashboard. */
+    main {
+      max-width: 76rem;
+      margin: 0 auto;
+      padding: 1.25rem 1.25rem 3rem;
     }
+    /* 6: every figure on the page sits in fixed-width columns, so a value that
+       changes on refresh never nudges the layout beside it. */
+    .stat-value, .meta, .score-label, .spark-value, .spark-axis,
+    .axis-label, .pill, .results-meta {
+      font-variant-numeric: tabular-nums;
+    }
+    /* The wordmark is a label in the top bar, not a banner. A dashboard has no
+       hero: the top of the screen is the most valuable space on it. */
     h1 {
-      font-size: clamp(2.2rem, 6vw, 3.6rem);
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      line-height: 1.05;
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      line-height: 1.2;
     }
-    h1 .accent { color: #4f8cff; }
-    p.sub {
-      margin-top: 1rem;
-      font-size: 1.05rem;
-      color: #9fb0c7;
-      max-width: 34rem;
-    }
-    .pulse {
-      margin-top: 2.5rem;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.6rem;
-      font-size: 0.85rem;
-      color: #86efac;
-    }
-    .dot {
-      width: 9px; height: 9px; border-radius: 50%;
-      background: #22c55e;
-      box-shadow: 0 0 0 0 rgba(34,197,94,0.6);
-      animation: pulse 2s infinite;
-    }
-    @keyframes pulse {
-      0%   { box-shadow: 0 0 0 0 rgba(34,197,94,0.6); }
-      70%  { box-shadow: 0 0 0 10px rgba(34,197,94,0); }
-      100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
-    }
+    h1 .accent { color: inherit; }
+    /* Pipeline freshness, read from dashboard.json's generated_at. Plain text
+       on purpose: a status light hardcoded to "online" asserts something the
+       page never checked, so this states when data actually last landed and
+       turns amber once that goes stale. */
+    .freshness { margin-left: auto; font-size: 0.75rem; color: var(--ink-mute); }
+    .freshness[data-stale="true"] { color: #f0b872; }
 
     /* --- hamburger menu ---
        The pages are sections of THIS file, switched by hash (see the router at
        the bottom). One file means every page inherits the styles below for free
        and the deploy stays a single S3 object. */
-    .topbar { position: fixed; top: 0; left: 0; z-index: 10; padding: 0.9rem; text-align: left; }
-    .burger {
-      width: 2.5rem; height: 2.5rem; padding: 0 0.55rem; cursor: pointer;
-      display: grid; align-content: center; gap: 5px;
-      background: #0f1626; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+    .topbar {
+      position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; gap: 0.85rem;
+      padding: 0.6rem 1.25rem;
+      background: var(--bg);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
     }
-    .burger span { display: block; height: 2px; border-radius: 1px; background: #9fb0c7; }
-    .burger:hover span { background: #e6edf7; }
-    .burger:focus-visible { outline: 2px solid #4f8cff; outline-offset: 2px; }
+    .burger {
+      width: 2.1rem; height: 2.1rem; padding: 0 0.45rem; cursor: pointer;
+      display: grid; align-content: center; gap: 4px;
+      background: var(--surface); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+    }
+    .burger span { display: block; height: 2px; border-radius: 1px; background: var(--ink-dim); }
+    .burger:hover span { background: var(--ink); }
+    .burger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* Absolute so the menu overlays the page instead of shoving the bar's own
+       row taller when it opens. .topbar is sticky, so it is the containing block. */
     #nav {
+      position: absolute; top: 100%; left: 1.25rem;
       display: flex; flex-direction: column; min-width: 11rem;
       margin-top: 0.4rem; padding: 0.35rem;
-      background: #0f1626; border: 1px solid rgba(255,255,255,0.12); border-radius: 12px;
+      background: var(--surface); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
     }
     /* An author `display` beats the UA stylesheet's [hidden] rule, so the flex
        above would keep the menu on screen no matter what .hidden was set to.
        This is what actually closes it. */
     #nav[hidden] { display: none; }
     #nav a {
-      padding: 0.5rem 0.7rem; border-radius: 8px;
-      font-size: 0.9rem; color: #9fb0c7; text-decoration: none;
+      padding: 0.45rem 0.65rem; border-radius: 5px;
+      font-size: 0.875rem; color: var(--ink-dim); text-decoration: none;
     }
-    #nav a:hover { background: #16233c; color: #e6edf7; }
-    #nav a[aria-current] { background: #1b2c4a; color: #e6edf7; font-weight: 600; }
+    #nav a:hover { background: var(--surface-hover); color: var(--ink); }
+    #nav a[aria-current] { background: var(--surface-3); color: var(--ink); font-weight: 600; }
 
     /* --- cards --- */
     .card {
-      margin: 2.5rem auto 0;
-      width: min(44rem, 100%);
-      background: #0f1626;
+      margin: 0 0 1rem;
+      width: 100%;
+      background: var(--surface);
       border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 16px;
-      padding: 1.5rem 1.5rem 1.25rem;
-      text-align: left;
+      border-radius: 6px;
+      padding: 1.1rem 1.25rem 1rem;
     }
     .card h2 {
       margin: 0 0 0.25rem;
@@ -106,82 +119,80 @@
       font-weight: 600;
       letter-spacing: 0.14em;
       text-transform: uppercase;
-      color: #9fb0c7;
+      color: var(--ink-dim);
     }
-    .card .caption { margin: 0 0 1rem; font-size: 0.8rem; color: #6b7c96; }
+    .card .caption { margin: 0 0 1rem; font-size: 0.8rem; color: var(--ink-mute); }
     .chart { width: 100%; height: auto; display: block; }
 
     /* recessive chrome */
-    .grid line { stroke: #223049; stroke-width: 1; }
-    .axis-label { fill: #6b7c96; font-size: 11px; }
-    .vendor-label { fill: #9fb0c7; font-size: 12px; }
+    .grid line { stroke: var(--line-grid); stroke-width: 1; }
+    .axis-label { fill: var(--ink-mute); font-size: 11px; }
+    .vendor-label { fill: var(--ink-dim); font-size: 12px; }
     /* marks */
     .bar { transition: opacity 0.15s ease; }
     .chart:hover .bar { opacity: 0.45; }
     .chart .bar:hover { opacity: 1; }
-    .score-label { fill: #e6edf7; font-size: 11px; font-weight: 600; pointer-events: none; }
-    .state { color: #9fb0c7; font-size: 0.9rem; }
+    .score-label { fill: var(--ink); font-size: 11px; font-weight: 600; pointer-events: none; }
+    .state { color: var(--ink-dim); font-size: 0.9rem; }
 
     /* --- CVE volume: hero number + 30-day sparkline --- */
     .trend-head {
       display: flex; align-items: baseline; justify-content: space-between;
       flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 0.5rem;
     }
-    .stat-label { display: block; font-size: 0.8rem; color: #9fb0c7; }
-    /* Proportional figures, not tabular — this is a standalone display number,
-       and tabular digits read loose at this size. */
+    .stat-label { display: block; font-size: 0.8rem; color: var(--ink-dim); }
     .stat-value {
-      display: block; font-size: 3rem; font-weight: 600;
-      line-height: 1.05; letter-spacing: -0.02em; color: #e6edf7;
+      display: block; font-size: 2.25rem; font-weight: 600;
+      line-height: 1.05; letter-spacing: -0.02em; color: var(--ink);
     }
     .spark { width: 100%; height: auto; display: block; }
-    .spark-line { fill: none; stroke: #4f8cff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-    .spark-area { fill: #4f8cff; opacity: 0.10; }
+    .spark-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+    .spark-area { fill: var(--accent); opacity: 0.10; }
     /* 2px ring in the surface colour so the dot stays legible over the line. */
-    .spark-dot { fill: #4f8cff; stroke: #0f1626; stroke-width: 2; }
-    .spark-value { fill: #9fb0c7; font-size: 11px; font-weight: 600; pointer-events: none; }
-    .spark-axis { fill: #6b7c96; font-size: 10px; }
+    .spark-dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+    .spark-value { fill: var(--ink-dim); font-size: 11px; font-weight: 600; pointer-events: none; }
+    .spark-axis { fill: var(--ink-mute); font-size: 10px; }
     /* One hit band per day: invisible until hovered, then a faint wash + the
        native tooltip carries the exact date and count. */
-    .spark-hit { fill: #e6edf7; opacity: 0; }
+    .spark-hit { fill: var(--ink); opacity: 0; }
     .spark-hit:hover { opacity: 0.07; }
 
     /* --- segmented controls (timeframe · how many) --- */
     .controls { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; margin-bottom: 0.6rem; }
-    .seg { display: inline-flex; border: 1px solid rgba(255,255,255,0.12); border-radius: 10px; overflow: hidden; }
+    .seg { display: inline-flex; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; overflow: hidden; }
     .seg button {
       font: inherit; font-size: 0.8rem; cursor: pointer;
-      background: #0b1220; color: #9fb0c7; border: 0;
+      background: var(--surface-2); color: var(--ink-dim); border: 0;
       padding: 0.4rem 0.7rem;
       border-left: 1px solid rgba(255,255,255,0.09);
     }
     .seg button:first-child { border-left: 0; }
-    .seg button:hover { color: #e6edf7; }
-    .seg button[aria-pressed="true"] { background: #1b2c4a; color: #e6edf7; font-weight: 600; }
-    .seg button:focus-visible { outline: 2px solid #4f8cff; outline-offset: -2px; }
-    .seg-label { align-self: center; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: #6b7c96; }
+    .seg button:hover { color: var(--ink); }
+    .seg button[aria-pressed="true"] { background: var(--surface-3); color: var(--ink); font-weight: 600; }
+    .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .seg-label { align-self: center; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute); }
 
     /* --- search / filter panel --- */
-    .search { width: min(52rem, 100%); }
+    .search { width: 100%; }
     .filters { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.5rem; }
     .filters input[type="search"] { flex: 1 1 16rem; min-width: 0; }
     .filters input, .filters select, .filters button {
-      font: inherit; color: #e6edf7; background: #0b1220;
-      border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
-      padding: 0.55rem 0.75rem;
+      font: inherit; color: var(--ink); background: var(--surface-2);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+      padding: 0.5rem 0.7rem;
     }
-    .filters input::placeholder { color: #6b7c96; }
+    .filters input::placeholder { color: var(--ink-mute); }
     .filters select { cursor: pointer; }
     .filters button {
       cursor: pointer; font-weight: 600; padding-inline: 1.1rem;
-      background: #4f8cff; border-color: #4f8cff; color: #06101f;
+      background: var(--accent); border-color: var(--accent); color: var(--bg);
     }
     .filters button:hover { background: #6ba0ff; }
     .filters input:focus, .filters select:focus, .filters button:focus-visible {
-      outline: 2px solid #4f8cff; outline-offset: 1px;
+      outline: 2px solid var(--accent); outline-offset: 1px;
     }
-    .hint { margin: 0 0 1rem; font-size: 0.75rem; color: #6b7c96; }
-    .results-meta { font-size: 0.75rem; color: #9fb0c7; margin-bottom: 0.4rem; }
+    .hint { margin: 0 0 1rem; font-size: 0.75rem; color: var(--ink-mute); }
+    .results-meta { font-size: 0.75rem; color: var(--ink-dim); margin-bottom: 0.4rem; }
 
     /* --- priority band key ---
        Each row's score badge is coloured by PRIORITY, so without this the colour
@@ -190,27 +201,27 @@
     .key {
       margin: 0 0 1rem;
       padding: 0.75rem 0.9rem;
-      background: #0b1220;
+      background: var(--surface-2);
       border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 10px;
+      border-radius: 6px;
       display: flex;
       flex-wrap: wrap;
       gap: 0.55rem 1.1rem;
     }
     .key-item {
       display: inline-flex; align-items: baseline; gap: 0.45rem;
-      font-size: 0.75rem; color: #9fb0c7;
+      font-size: 0.75rem; color: var(--ink-dim);
     }
     .key .pill {
       font-size: 0.68rem; min-width: 2.05rem;
       padding: 0.14rem 0.4rem; font-weight: 700;
     }
-    .key-item b { color: #c8d6ea; font-weight: 600; }
+    .key-item b { color: var(--ink); font-weight: 600; }
     .key-note {
       flex-basis: 100%; margin: 0.15rem 0 0;
-      font-size: 0.73rem; line-height: 1.5; color: #6b7c96;
+      font-size: 0.73rem; line-height: 1.5; color: var(--ink-mute);
     }
-    .key-note strong { color: #9fb0c7; font-weight: 600; }
+    .key-note strong { color: var(--ink-dim); font-weight: 600; }
 
     /* result rows */
     .row { border-top: 1px solid rgba(255,255,255,0.06); padding: 0.75rem 0; }
@@ -224,10 +235,10 @@
     .pill.p1 { color: #ff9b9b; background: rgba(229,72,77,0.14);  border-color: rgba(229,72,77,0.40); }
     .pill.p2 { color: #f0b872; background: rgba(217,130,43,0.14); border-color: rgba(217,130,43,0.40); }
     .pill.p3 { color: #8fbcff; background: rgba(57,135,229,0.14); border-color: rgba(57,135,229,0.40); }
-    .pill.p4 { color: #9fb0c7; background: rgba(159,176,199,0.12); border-color: rgba(159,176,199,0.30); }
+    .pill.p4 { color: var(--ink-dim); background: rgba(155,158,164,0.12); border-color: rgba(155,158,164,0.30); }
     /* Unscored is a missing measurement, not a low one — hollow and dashed so it
        never reads as "we assessed this and it's fine". */
-    .pill.unscored { color: #6b7c96; background: none; border-style: dashed; border-color: rgba(159,176,199,0.35); }
+    .pill.unscored { color: var(--ink-mute); background: none; border-style: dashed; border-color: rgba(155,158,164,0.35); }
     /* Form badges on the Filings page. Deliberately NOT the .p1-.p4 hues: a
        filing carries no LoopScore, and borrowing a priority colour would imply
        a severity nobody assigned. */
@@ -238,12 +249,19 @@
        pill, because in both cases the badge is saying "this is not the whole
        story" rather than naming a different category. */
     .pill.amended { border-style: dashed; min-width: 3.6rem; }
-    .cve { font-weight: 600; color: #e6edf7; text-decoration: none; }
-    .cve:hover { color: #7fb0ff; text-decoration: underline; }
-    .vendor { color: #9fb0c7; }
-    .meta { margin-left: auto; font-size: 0.78rem; color: #6b7c96; white-space: nowrap; }
-    .summary { margin: 0.4rem 0 0; font-size: 0.85rem; color: #9fb0c7; line-height: 1.4; }
-    .empty, .error { color: #9fb0c7; font-size: 0.9rem; padding: 0.5rem 0; }
+    .cve { font-weight: 600; color: var(--ink); text-decoration: none; }
+    /* 7: a CVE ID is an identifier, so it is set as one — mono also holds every
+       ID to the same width, which lines the column up without a table. Scoped to
+       the search results on purpose: the filings list reuses .cve for company
+       names, and those are prose, not identifiers. */
+    #results .cve {
+      font-family: var(--mono); font-size: 0.88rem; letter-spacing: -0.01em;
+    }
+    .cve:hover { color: var(--accent-bright); text-decoration: underline; }
+    .vendor { color: var(--ink-dim); }
+    .meta { margin-left: auto; font-size: 0.78rem; color: var(--ink-mute); white-space: nowrap; }
+    .summary { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--ink-dim); line-height: 1.4; }
+    .empty, .error { color: var(--ink-dim); font-size: 0.9rem; padding: 0.5rem 0; }
     .error { color: #f0a0a0; }
   </style>
 </head>
@@ -253,6 +271,8 @@
             aria-expanded="false" aria-controls="nav" aria-label="Menu">
       <span></span><span></span><span></span>
     </button>
+    <h1>Cyber<span class="accent">LoopNews</span></h1>
+    <span class="freshness" id="freshness"></span>
     <nav id="nav" hidden>
       <a href="#/" data-page="dashboard">Dashboard</a>
       <a href="#/filings" data-page="filings">SEC Filings</a>
@@ -260,11 +280,6 @@
   </header>
 
   <main>
-    <!-- Hero is shared chrome across pages. Which page you are on is carried by
-         the highlighted nav item and the card's own heading, not by a strapline
-         the router has to rewrite. -->
-    <h1>Cyber<span class="accent">LoopNews</span></h1>
-
     <section class="card trend" data-route="dashboard">
       <h2>CVE volume</h2>
       <div class="trend-head">
@@ -274,7 +289,7 @@
         </span>
         <p class="caption" style="margin:0">New CVEs per day · last 30 days</p>
       </div>
-      <svg class="spark" viewBox="0 0 640 110" preserveAspectRatio="xMidYMid meet"
+      <svg class="spark" viewBox="0 0 1120 110" preserveAspectRatio="xMidYMid meet"
            role="img" aria-label="Sparkline of CVEs published per day over the last 30 days"></svg>
     </section>
 
@@ -295,7 +310,7 @@
         </div>
       </div>
       <p class="caption" id="chartCaption">Highest-scoring CVEs · grouped by vendor</p>
-      <svg class="chart" viewBox="0 0 640 420" preserveAspectRatio="xMidYMid meet"
+      <svg class="chart" viewBox="0 0 1120 420" preserveAspectRatio="xMidYMid meet"
            role="img" aria-label="Bar chart of the top CVEs by LoopScore, grouped by vendor"></svg>
       <p class="state">Loading…</p>
     </section>
@@ -377,8 +392,6 @@
 
       <div class="results" id="filingsList"></div>
     </section>
-
-    <span class="pulse"><span class="dot"></span> Pipeline online</span>
   </main>
 
   <script>
@@ -394,9 +407,17 @@
 
     // viewBox geometry. The 90px below the baseline is for the vendor labels,
     // which rotate once there are too many groups to write them flat.
-    const plot = { left: 38, right: 632, top: 22, bottom: 330 }; // bottom = baseline
-    const Y_MAX = 100;                                           // LoopScore is 0–100
-    const BAR_MAX = 24;                                          // never fill the slot
+    const plot = { left: 38, right: 1112, top: 22, bottom: 330 }; // bottom = baseline
+    const Y_MAX = 100;                                            // LoopScore is 0–100
+
+    // Everything in the plots is drawn in viewBox units, so the viewBox width
+    // decides how big the labels end up once the SVG is scaled to its container.
+    // A width that suits a desktop card would shrink the type to a few pixels on
+    // a phone, so there are two — picked at draw time, redrawn when the
+    // breakpoint flips.
+    const WIDE_VB = 1120, NARROW_VB = 640;
+    const vbWidth = () => (window.innerWidth < 760 ? NARROW_VB : WIDE_VB);
+    let lastVB = vbWidth();
 
     const el = (name, attrs, parent) => {
       const n = document.createElementNS(SVGNS, name);
@@ -425,6 +446,13 @@
       const svg = document.querySelector(".chart");
       const state = document.querySelector(".state");
       svg.textContent = "";
+
+      const VB = vbWidth();
+      svg.setAttribute("viewBox", `0 0 ${VB} 420`);
+      plot.right = VB - 8;
+      // Never fill the slot. Held at ~4% of the plot so a ten-bar view is as
+      // tight at either width as it was at the original 640.
+      const BAR_MAX = Math.round(VB * 0.04);
 
       const rows = (DATA.windows[String(winDays)] || []).slice(0, topN);
       document.getElementById("chartCaption").textContent =
@@ -531,9 +559,11 @@
       svg.textContent = "";
       if (!days.length) return;
 
-      // viewBox is 640x110: the plot sits between TOP and BASE, with the date
-      // labels in the strip underneath.
-      const SW = 640, LEFT = 6, RIGHT = 34, TOP = 18, BASE = 84;
+      // The plot sits between TOP and BASE, with the date labels in the strip
+      // underneath. Width follows the same breakpoint as the bar chart.
+      const SW = vbWidth();
+      svg.setAttribute("viewBox", `0 0 ${SW} 110`);
+      const LEFT = 6, RIGHT = 34, TOP = 18, BASE = 84;
       const counts = days.map((d) => d.count);
       const peak = Math.max(...counts, 1);
       const x = (i) => LEFT + (i * (SW - LEFT - RIGHT)) / Math.max(1, days.length - 1);
@@ -584,11 +614,38 @@
       setSeg("topSeg", "top", topN, (v) => { topN = v; paintSegs(); drawChart(); });
     };
 
+    // --- pipeline freshness ---
+    // dashboard.json carries generated_at (the publisher's own run time), so the
+    // bar can report when data last landed rather than claiming the pipeline is
+    // up. Prod publishes hourly; three hours of silence is worth flagging.
+    const STALE_AFTER_MIN = 180;
+
+    function agoText(iso) {
+      const then = new Date(iso);
+      if (!iso || isNaN(then.getTime())) return null;
+      const mins = Math.max(0, Math.round((Date.now() - then.getTime()) / 60000));
+      if (mins < 1) return { text: "just now", mins };
+      if (mins < 60) return { text: mins + " min ago", mins };
+      const hrs = Math.round(mins / 60);
+      if (hrs < 24) return { text: hrs + (hrs === 1 ? " hour ago" : " hours ago"), mins };
+      const days = Math.round(hrs / 24);
+      return { text: days + (days === 1 ? " day ago" : " days ago"), mins };
+    }
+
+    function showFreshness(iso) {
+      const el = document.getElementById("freshness");
+      const ago = agoText(iso);
+      if (!ago) { el.textContent = ""; return; }
+      el.textContent = "updated " + ago.text;
+      el.dataset.stale = String(ago.mins > STALE_AFTER_MIN);
+    }
+
     fetch("/data/dashboard.json")
       .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then((data) => {
         DATA = data;
         document.getElementById("count24").textContent = (data.last_24h ?? 0).toLocaleString();
+        showFreshness(data.generated_at);
         drawSpark(data.days || []);
         paintSegs();
         drawChart();
@@ -596,6 +653,9 @@
       })
       .catch((err) => {
         document.querySelector(".state").textContent = "Could not load data (" + err.message + ")";
+        const fresh = document.getElementById("freshness");
+        fresh.textContent = "data unavailable";
+        fresh.dataset.stale = "true";
       });
   </script>
 
@@ -829,6 +889,16 @@
       if (!NAV.hidden && !e.target.closest(".topbar")) setMenu(false);
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMenu(false); });
+    // Only redraw when the breakpoint actually flips: resizing inside a band
+    // changes nothing, because the SVG already scales itself.
+    window.addEventListener("resize", () => {
+      const vb = vbWidth();
+      if (vb === lastVB || !DATA) return;
+      lastVB = vb;
+      drawSpark(DATA.days || []);
+      drawChart();
+    });
+
     window.addEventListener("hashchange", route);
     route();
   </script>
