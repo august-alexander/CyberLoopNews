@@ -65,6 +65,10 @@
        turns amber once that goes stale. */
     .freshness { margin-left: auto; font-size: 0.75rem; color: var(--ink-mute); }
     .freshness[data-stale="true"] { color: #f0b872; }
+    /* Page build stamp, not pipeline freshness — this is a single static file
+       with no build step, so the version is the date-time it was last hand-edited,
+       set at the point of each change. */
+    .version { font-size: 0.75rem; color: var(--ink-mute); font-family: var(--mono); }
 
     /* --- hamburger menu ---
        The pages are sections of THIS file, switched by hash (see the router at
@@ -273,6 +277,7 @@
     </button>
     <h1>Cyber<span class="accent">LoopNews</span></h1>
     <span class="freshness" id="freshness"></span>
+    <span class="version" id="version">20260923-141452</span>
     <nav id="nav" hidden>
       <a href="#/" data-page="dashboard">Dashboard</a>
       <a href="#/filings" data-page="filings">SEC Filings</a>
