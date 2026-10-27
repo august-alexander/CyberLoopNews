@@ -3,663 +3,826 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CyberLoop — Dashboard</title>
+  <title>CyberLoopNews</title>
+  <!-- Set the theme before first paint, so a reader who chose dark never sees
+       a flash of paper. Storage can throw (private mode, blocked site data);
+       the page falls back to following the OS. -->
+  <script>
+    try {
+      const t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" />
+  <!-- D3 is served from our own bucket (see frontend.tf), not a public CDN,
+       so the site never depends on a third party being up or untampered. -->
+  <script src="/d3-7.9.0.min.js"></script>
   <style>
+    /* The site is a news desk, not a console: paper and ink, one brand colour,
+       and the four priority bands as the only other hues on the page. Every
+       chart colour below was run through the dataviz palette validator against
+       its own surface — re-run it if you change one. */
     :root {
-      color-scheme: dark;
+      color-scheme: light;
+      --paper:   #f6f4ef;
+      --paper-2: #edeae2;   /* hover wash, inputs */
+      --ink:     #1b1a17;
+      --ink-2:   #4d4a43;
+      --ink-3:   #77736a;   /* axis text, captions — 4.4:1 on paper */
+      --rule:    #d8d3c8;
+      --grid:    #e4e0d6;
 
-      /* Ink */
-      --ink:      #e8e9ea;
-      --ink-dim:  #9b9ea4;
-      --ink-mute: #6c6f76;
+      /* Brand. A placeholder deep teal: not blue (every vendor dashboard), not
+         red (that means P1 here). It is also the single series colour, so the
+         charts and the masthead read as one publication. */
+      --brand:     #14657f;
+      --bar:       #14657f;
+      --bar-label: #ffffff;
 
-      /* Surfaces. Near-neutral rather than navy: the page is chrome around the
-         data, so it carries no hue of its own and colour means something. */
-      --bg:            #0b0c0e;
-      --surface:       #141518;
-      --surface-2:     #101114;
-      --surface-3:     #26282e;
-      --surface-hover: #1d1f24;
-      --line-grid:     #26282e;
+      /* Priority bands. P2 sits under 3:1 on paper, which is legal only
+         because a band never appears without its "P2" text beside it. */
+      --p1: #c8372f;
+      --p2: #d9821f;
+      --p3: #2f6fb8;
+      --p4: #a29d92;
 
-      /* The chart palette's first step, reused as the interface accent so the
-         page chrome and the plots read as one system. */
-      --accent:        #3987e5;
-      --accent-bright: #6ba3ee;
+      --stale: #9a5800;
+      --error: #b3261e;
 
-      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+      --sans:  "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+      --mono:  ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
+    /* Dark is its own set of steps, validated against #161614 — not the light
+       values inverted. Declared twice: the media query follows the OS, the
+       data-theme scope is the reader's own choice and wins both ways. */
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --paper: #161614; --paper-2: #201f1c;
+        --ink: #ecebe6; --ink-2: #bdbab1; --ink-3: #8c897f;
+        --rule: #34332f; --grid: #2a2926;
+        --brand: #2f9fbf; --bar: #2f9fbf; --bar-label: #10100f;
+        --p1: #c93a3a; --p2: #b58f1c; --p3: #4a89d4; --p4: #6b6862;
+        --stale: #e0a24a; --error: #f08a80;
+      }
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --paper: #161614; --paper-2: #201f1c;
+      --ink: #ecebe6; --ink-2: #bdbab1; --ink-3: #8c897f;
+      --rule: #34332f; --grid: #2a2926;
+      --brand: #2f9fbf; --bar: #2f9fbf; --bar-label: #10100f;
+      --p1: #c93a3a; --p2: #b58f1c; --p3: #4a89d4; --p4: #6b6862;
+      --stale: #e0a24a; --error: #f08a80;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Smooth for in-page jumps and section switches, but not for readers who
+       have asked their OS for less motion. */
+    @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
     body {
       min-height: 100vh;
-      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
+      background: var(--paper);
       color: var(--ink);
-      padding: 0;
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }
-    /* One measure for every page. Wider than the old 44rem card so more rows
-       land above the fold — density is the point of a dashboard. */
-    main {
-      max-width: 76rem;
-      margin: 0 auto;
-      padding: 1.25rem 1.25rem 3rem;
-    }
-    /* 6: every figure on the page sits in fixed-width columns, so a value that
-       changes on refresh never nudges the layout beside it. */
-    .stat-value, .meta, .score-label, .spark-value, .spark-axis,
-    .axis-label, .pill, .results-meta {
-      font-variant-numeric: tabular-nums;
-    }
-    /* The wordmark is a label in the top bar, not a banner. A dashboard has no
-       hero: the top of the screen is the most valuable space on it. */
-    h1 {
-      font-size: 0.95rem;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-      line-height: 1.2;
-    }
-    h1 .accent { color: inherit; }
-    /* Pipeline freshness, read from dashboard.json's generated_at. Plain text
-       on purpose: a status light hardcoded to "online" asserts something the
-       page never checked, so this states when data actually last landed and
-       turns amber once that goes stale. */
-    .freshness { margin-left: auto; font-size: 0.75rem; color: var(--ink-mute); }
-    .freshness[data-stale="true"] { color: #f0b872; }
-    /* Page build stamp, not pipeline freshness — this is a single static file
-       with no build step, so the version is the date-time it was last hand-edited,
-       set at the point of each change. */
-    .version { font-size: 0.75rem; color: var(--ink-mute); font-family: var(--mono); }
+    a { color: inherit; }
+    .wrap { max-width: 72rem; margin: 0 auto; padding: 0 16px; }
+    @media (min-width: 760px) { .wrap { padding: 0 2rem; } }
 
-    /* --- hamburger menu ---
-       The pages are sections of THIS file, switched by hash (see the router at
-       the bottom). One file means every page inherits the styles below for free
-       and the deploy stays a single S3 object. */
-    .topbar {
-      position: sticky; top: 0; z-index: 10;
-      display: flex; align-items: center; gap: 0.85rem;
-      padding: 0.6rem 1.25rem;
-      background: var(--bg);
-      border-bottom: 1px solid rgba(255,255,255,0.08);
+    /* --- masthead ---
+       A heavy rule over the nameplate: the oldest signal there is that what
+       follows is edited, not streamed. Two
+       sections, so they are plain links — a hamburger only hid them. */
+    .masthead { border-top: 4px solid var(--ink); }
+    .mast-row {
+      display: flex; align-items: baseline; flex-wrap: wrap;
+      gap: 0.25rem 1.5rem; padding: 0.9rem 0 0.4rem;
     }
-    .burger {
-      width: 2.1rem; height: 2.1rem; padding: 0 0.45rem; cursor: pointer;
-      display: grid; align-content: center; gap: 4px;
-      background: var(--surface); border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+    .wordmark {
+      font-family: var(--serif); font-weight: 700; font-size: 1.75rem;
+      letter-spacing: -0.01em; line-height: 1; text-decoration: none;
     }
-    .burger span { display: block; height: 2px; border-radius: 1px; background: var(--ink-dim); }
-    .burger:hover span { background: var(--ink); }
-    .burger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    /* Absolute so the menu overlays the page instead of shoving the bar's own
-       row taller when it opens. .topbar is sticky, so it is the containing block. */
-    #nav {
-      position: absolute; top: 100%; left: 1.25rem;
-      display: flex; flex-direction: column; min-width: 11rem;
-      margin-top: 0.4rem; padding: 0.35rem;
-      background: var(--surface); border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+    .sections { display: flex; gap: 1.25rem; }
+    .sections a {
+      font-size: 0.95rem; font-weight: 600; color: var(--ink-2);
+      text-decoration: none; padding-bottom: 2px; border-bottom: 2px solid transparent;
     }
-    /* An author `display` beats the UA stylesheet's [hidden] rule, so the flex
-       above would keep the menu on screen no matter what .hidden was set to.
-       This is what actually closes it. */
-    #nav[hidden] { display: none; }
-    #nav a {
-      padding: 0.45rem 0.65rem; border-radius: 5px;
-      font-size: 0.875rem; color: var(--ink-dim); text-decoration: none;
+    .sections a:hover { color: var(--ink); }
+    .sections a[aria-current] { color: var(--ink); border-bottom-color: var(--brand); }
+    .theme-toggle {
+      margin-left: auto; font: inherit; font-size: 0.8rem; color: var(--ink-3);
+      background: none; border: 0; cursor: pointer; padding: 0.2rem 0;
     }
-    #nav a:hover { background: var(--surface-hover); color: var(--ink); }
-    #nav a[aria-current] { background: var(--surface-3); color: var(--ink); font-weight: 600; }
+    .theme-toggle:hover { color: var(--ink); }
+    .dateline {
+      display: flex; flex-wrap: wrap; gap: 0 0.5rem;
+      font-size: 0.85rem; color: var(--ink-3);
+      padding: 0.35rem 0 0.6rem;
+    }
+    .dateline [data-stale="true"] { color: var(--stale); font-weight: 600; }
 
-    /* --- cards --- */
-    .card {
-      margin: 0 0 1rem;
-      width: 100%;
-      background: var(--surface);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 6px;
-      padding: 1.1rem 1.25rem 1rem;
-    }
-    .card h2 {
-      margin: 0 0 0.25rem;
-      font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--ink-dim);
-    }
-    .card .caption { margin: 0 0 1rem; font-size: 0.8rem; color: var(--ink-mute); }
-    .chart { width: 100%; height: auto; display: block; }
+    :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 
-    /* recessive chrome */
-    .grid line { stroke: var(--line-grid); stroke-width: 1; }
-    .axis-label { fill: var(--ink-mute); font-size: 11px; }
-    .vendor-label { fill: var(--ink-dim); font-size: 12px; }
-    /* marks */
-    .bar { transition: opacity 0.15s ease; }
-    .chart:hover .bar { opacity: 0.45; }
-    .chart .bar:hover { opacity: 1; }
-    .score-label { fill: var(--ink); font-size: 11px; font-weight: 600; pointer-events: none; }
-    .state { color: var(--ink-dim); font-size: 0.9rem; }
-
-    /* --- CVE volume: hero number + 30-day sparkline --- */
-    .trend-head {
-      display: flex; align-items: baseline; justify-content: space-between;
-      flex-wrap: wrap; gap: 0.5rem 1rem; margin-bottom: 0.5rem;
+    /* --- the lead: headline, dek, key figures --- */
+    .lead { padding: 2rem 0 1.5rem; max-width: 46rem; }
+    .visually-hidden {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); white-space: nowrap;
     }
-    .stat-label { display: block; font-size: 0.8rem; color: var(--ink-dim); }
-    .stat-value {
-      display: block; font-size: 2.25rem; font-weight: 600;
-      line-height: 1.05; letter-spacing: -0.02em; color: var(--ink);
+    .kicker {
+      font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--brand); margin-bottom: 0.5rem;
     }
-    .spark { width: 100%; height: auto; display: block; }
-    .spark-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-    .spark-area { fill: var(--accent); opacity: 0.10; }
-    /* 2px ring in the surface colour so the dot stays legible over the line. */
-    .spark-dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
-    .spark-value { fill: var(--ink-dim); font-size: 11px; font-weight: 600; pointer-events: none; }
-    .spark-axis { fill: var(--ink-mute); font-size: 10px; }
-    /* One hit band per day: invisible until hovered, then a faint wash + the
-       native tooltip carries the exact date and count. */
-    .spark-hit { fill: var(--ink); opacity: 0; }
-    .spark-hit:hover { opacity: 0.07; }
-
-    /* --- segmented controls (timeframe · how many) --- */
-    .controls { display: flex; flex-wrap: wrap; gap: 0.5rem 0.75rem; margin-bottom: 0.6rem; }
-    .seg { display: inline-flex; border: 1px solid rgba(255,255,255,0.12); border-radius: 6px; overflow: hidden; }
-    .seg button {
-      font: inherit; font-size: 0.8rem; cursor: pointer;
-      background: var(--surface-2); color: var(--ink-dim); border: 0;
-      padding: 0.4rem 0.7rem;
-      border-left: 1px solid rgba(255,255,255,0.09);
+    .headline {
+      font-family: var(--serif); font-weight: 700;
+      font-size: clamp(1.75rem, 4vw, 2.6rem); line-height: 1.12; letter-spacing: -0.015em;
+      text-wrap: balance;
     }
-    .seg button:first-child { border-left: 0; }
-    .seg button:hover { color: var(--ink); }
-    .seg button[aria-pressed="true"] { background: var(--surface-3); color: var(--ink); font-weight: 600; }
-    .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-    .seg-label { align-self: center; font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-mute); }
+    .dek {
+      margin-top: 0.75rem; font-size: 1.15rem; line-height: 1.45; color: var(--ink-2);
+      text-wrap: pretty;
+    }
 
-    /* --- search / filter panel --- */
-    .search { width: 100%; }
+    /* Hero figures stay in the sans with proportional digits; tabular figures
+       only where numbers stack in columns. */
+    .figures {
+      display: grid; grid-template-columns: repeat(2, 1fr);
+      margin: 0.75rem 0 1.5rem;
+    }
+    @media (min-width: 760px) { .figures { grid-template-columns: repeat(4, 1fr); } }
+    /* dt comes first in the markup (valid <dl>); the figure is shown above it. */
+    .figure { display: flex; flex-direction: column-reverse; justify-content: flex-end; padding: 0.4rem 1rem 0.5rem 0; }
+    /* No dividers between figures: the rule above and the spacing group them. */
+    .figure + .figure { padding-left: 1rem; }
+    @media (max-width: 759px) {
+      .figure:nth-child(3) { padding-left: 0; }
+    }
+    .figure dd { font-size: 2.4rem; font-weight: 600; line-height: 1.05; letter-spacing: -0.02em; }
+    .figure dt { margin-top: 0.3rem; font-size: 0.85rem; line-height: 1.35; color: var(--ink-2); }
+
+    /* --- charts ---
+       Each chart is a figure in the newspaper sense: a title that makes a
+       claim, a line saying how to read it, the graphic, and a source. No box —
+       a rule above is enough to say where one ends. */
+    .charts { display: grid; gap: 2.5rem; margin-bottom: 3rem; }
+    .chart-fig { border-top: 1px solid var(--ink); padding-top: 0.75rem; min-width: 0; }
+    /* Side by side, the two charts share one unbroken rule across the gutter
+       rather than two rules with a gap between them. */
+    @media (min-width: 980px) {
+      .charts { grid-template-columns: 1.15fr 1fr; gap: 3rem; align-items: start;
+                border-top: 1px solid var(--ink); padding-top: 0.75rem; }
+      .chart-fig { border-top: 0; padding-top: 0; }
+    }
+    .chart-title {
+      font-family: var(--serif); font-weight: 600; font-size: 1.3rem; line-height: 1.25;
+      text-wrap: balance;
+    }
+    .chart-dek { margin-top: 0.3rem; font-size: 0.9rem; color: var(--ink-2); }
+    .chart-box { position: relative; margin-top: 0.75rem; }
+    .chart-box svg { display: block; overflow: visible; }
+    .source { margin-top: 0.6rem; font-size: 0.78rem; color: var(--ink-3); }
+    .state { font-size: 0.9rem; color: var(--ink-2); padding: 1rem 0; }
+
+    /* Timeframe / size switches: text tabs with an underline, the way a
+       newspaper's own section tabs look, rather than app-style toggle pills. */
+    .controls { display: flex; flex-wrap: wrap; gap: 0.4rem 1.5rem; margin-top: 0.75rem; }
+    .tabs { display: flex; align-items: baseline; gap: 0.9rem; }
+    .tabs-label { font-size: 0.8rem; color: var(--ink-3); }
+    .tabs button {
+      font: inherit; font-size: 0.875rem; color: var(--ink-2); background: none; border: 0;
+      cursor: pointer; padding: 0.15rem 0; border-bottom: 2px solid transparent;
+    }
+    .tabs button:hover { color: var(--ink); }
+    .tabs button[aria-pressed="true"] { color: var(--ink); font-weight: 700; border-bottom-color: var(--ink); }
+
+    /* chart marks + chrome — colours by class so a theme switch repaints with
+       no redraw */
+    .gridline { stroke: var(--grid); stroke-width: 1; shape-rendering: crispEdges; }
+    .baseline { stroke: var(--ink-3); stroke-width: 1; shape-rendering: crispEdges; }
+    .tick { stroke: var(--ink-3); stroke-width: 1; shape-rendering: crispEdges; }
+    .axis-text { fill: var(--ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+    .band-text { fill: var(--ink-3); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+    .alert-line { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 3 3; shape-rendering: crispEdges; }
+    .alert-text { fill: var(--ink); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; }
+    .bar, .col { fill: var(--bar); }
+    .col.partial { opacity: 0.4; }
+    .bar-value { fill: var(--bar-label); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
+    .row-id { fill: var(--ink); font-family: var(--mono); font-size: 12.5px; }
+    .row-vendor { fill: var(--ink-3); font-size: 12px; }
+    .bar-row { cursor: pointer; }
+    .bar-row .hit { fill: var(--ink); opacity: 0; }
+    .bar-row:hover .hit, .bar-row:focus .hit { opacity: 0.05; }
+    .bar-row:focus { outline: none; }
+    .bar-row:hover .row-id, .bar-row:focus .row-id { text-decoration: underline; }
+    .avg-line { fill: none; stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+    /* Text laid over marks gets a paper-coloured halo instead of a box. */
+    .note { fill: var(--ink-2); font-size: 11.5px; font-weight: 600;
+            paint-order: stroke; stroke: var(--paper); stroke-width: 4px; stroke-linejoin: round; }
+    .hover-band { fill: var(--ink); opacity: 0.06; pointer-events: none; }
+    .vol-hit { fill: transparent; }
+
+    /* One tooltip for the page. Value first, label second. */
+    #tip {
+      position: fixed; z-index: 20; pointer-events: none; max-width: 18rem;
+      background: var(--paper); color: var(--ink);
+      border: 1px solid var(--rule); box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+      padding: 0.5rem 0.65rem; font-size: 0.82rem; line-height: 1.35;
+    }
+    #tip[hidden] { display: none; }
+    #tip strong { display: block; font-size: 0.95rem; }
+    #tip span { display: block; color: var(--ink-2); }
+
+    /* --- sections below the charts --- */
+    .section { border-top: 1px solid var(--ink); padding-top: 0.75rem; margin-bottom: 3rem; }
+    .section-title { font-family: var(--serif); font-weight: 600; font-size: 1.5rem; line-height: 1.2; }
+    .section-dek { margin: 0.3rem 0 1rem; font-size: 0.95rem; color: var(--ink-2); max-width: 46rem; }
+
     .filters { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.5rem; }
     .filters input[type="search"] { flex: 1 1 16rem; min-width: 0; }
     .filters input, .filters select, .filters button {
-      font: inherit; color: var(--ink); background: var(--surface-2);
-      border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
-      padding: 0.5rem 0.7rem;
+      font: inherit; font-size: 0.95rem; color: var(--ink); background: var(--paper);
+      border: 1px solid var(--rule); border-radius: 2px; padding: 0.5rem 0.7rem;
     }
-    .filters input::placeholder { color: var(--ink-mute); }
+    .filters input::placeholder { color: var(--ink-3); }
+    .filters input:focus, .filters select:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
     .filters select { cursor: pointer; }
     .filters button {
-      cursor: pointer; font-weight: 600; padding-inline: 1.1rem;
-      background: var(--accent); border-color: var(--accent); color: var(--bg);
+      cursor: pointer; font-weight: 700; padding-inline: 1.2rem;
+      background: var(--ink); border-color: var(--ink); color: var(--paper);
     }
-    .filters button:hover { background: #6ba0ff; }
-    .filters input:focus, .filters select:focus, .filters button:focus-visible {
-      outline: 2px solid var(--accent); outline-offset: 1px;
-    }
-    .hint { margin: 0 0 1rem; font-size: 0.75rem; color: var(--ink-mute); }
-    .results-meta { font-size: 0.75rem; color: var(--ink-dim); margin-bottom: 0.4rem; }
+    .filters button:hover { background: var(--ink-2); border-color: var(--ink-2); }
+    .hint { margin: 0 0 1.25rem; font-size: 0.82rem; color: var(--ink-3); max-width: 46rem; }
 
-    /* --- priority band key ---
-       Each row's score badge is coloured by PRIORITY, so without this the colour
-       is unreadable. Reuses the .pill classes above so the swatches can never
-       drift from the rows they explain. */
+    /* The band key reuses .pill so the swatches can never drift from the rows
+       they explain. */
     .key {
-      margin: 0 0 1rem;
-      padding: 0.75rem 0.9rem;
-      background: var(--surface-2);
-      border: 1px solid rgba(255,255,255,0.07);
-      border-radius: 6px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.55rem 1.1rem;
+      display: flex; flex-wrap: wrap; gap: 0.5rem 1.4rem;
+      padding: 0.75rem 0; margin-bottom: 1rem;
+      border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
     }
-    .key-item {
-      display: inline-flex; align-items: baseline; gap: 0.45rem;
-      font-size: 0.75rem; color: var(--ink-dim);
-    }
-    .key .pill {
-      font-size: 0.68rem; min-width: 2.05rem;
-      padding: 0.14rem 0.4rem; font-weight: 700;
-    }
-    .key-item b { color: var(--ink); font-weight: 600; }
-    .key-note {
-      flex-basis: 100%; margin: 0.15rem 0 0;
-      font-size: 0.73rem; line-height: 1.5; color: var(--ink-mute);
-    }
-    .key-note strong { color: var(--ink-dim); font-weight: 600; }
+    .key-item { display: inline-flex; align-items: baseline; gap: 0.45rem; font-size: 0.85rem; color: var(--ink-2); }
+    .key-item b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .key-note { flex-basis: 100%; font-size: 0.82rem; line-height: 1.5; color: var(--ink-3); }
+    .key-note strong { color: var(--ink-2); }
 
-    /* result rows */
-    .row { border-top: 1px solid rgba(255,255,255,0.06); padding: 0.75rem 0; }
+    .results-meta { font-size: 0.82rem; color: var(--ink-3); margin-bottom: 0.25rem; font-variant-numeric: tabular-nums; }
+    .row { border-top: 1px solid var(--rule); padding: 0.8rem 0; }
     .row:first-child { border-top: none; }
-    .row-main { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+    .row-main { display: flex; align-items: baseline; gap: 0.4rem 0.75rem; flex-wrap: wrap; }
+
+    /* A band is a coloured square beside the score, not a glowing pill: the
+       number stays in ink, the square carries the band. */
     .pill {
-      font-size: 0.78rem; font-weight: 700; min-width: 2.4rem; text-align: center;
-      padding: 0.2rem 0.5rem; border-radius: 999px; border: 1px solid transparent;
+      display: inline-flex; align-items: center; gap: 0.4rem; min-width: 3.1rem;
+      font-size: 0.9rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink);
     }
-    /* colour follows PRIORITY, one source of truth with the analyzer's bands */
-    .pill.p1 { color: #ff9b9b; background: rgba(229,72,77,0.14);  border-color: rgba(229,72,77,0.40); }
-    .pill.p2 { color: #f0b872; background: rgba(217,130,43,0.14); border-color: rgba(217,130,43,0.40); }
-    .pill.p3 { color: #8fbcff; background: rgba(57,135,229,0.14); border-color: rgba(57,135,229,0.40); }
-    .pill.p4 { color: var(--ink-dim); background: rgba(155,158,164,0.12); border-color: rgba(155,158,164,0.30); }
-    /* Unscored is a missing measurement, not a low one — hollow and dashed so it
-       never reads as "we assessed this and it's fine". */
-    .pill.unscored { color: var(--ink-mute); background: none; border-style: dashed; border-color: rgba(155,158,164,0.35); }
-    /* Form badges on the Filings page. Deliberately NOT the .p1-.p4 hues: a
-       filing carries no LoopScore, and borrowing a priority colour would imply
-       a severity nobody assigned. */
-    .pill.form8 { color: #9085e9; background: rgba(144,133,233,0.14); border-color: rgba(144,133,233,0.40); }
-    .pill.form6 { color: #6fc8a6; background: rgba(25,158,112,0.16);  border-color: rgba(25,158,112,0.42); }
-    .pill.form8, .pill.form6 { font-size: 0.72rem; min-width: 3rem; letter-spacing: 0.03em; }
-    /* An amendment revises an earlier disclosure. Dashed, like the unscored CVE
-       pill, because in both cases the badge is saying "this is not the whole
-       story" rather than naming a different category. */
-    .pill.amended { border-style: dashed; min-width: 3.6rem; }
-    .cve { font-weight: 600; color: var(--ink); text-decoration: none; }
-    /* 7: a CVE ID is an identifier, so it is set as one — mono also holds every
-       ID to the same width, which lines the column up without a table. Scoped to
-       the search results on purpose: the filings list reuses .cve for company
-       names, and those are prose, not identifiers. */
-    #results .cve {
-      font-family: var(--mono); font-size: 0.88rem; letter-spacing: -0.01em;
+    .pill::before {
+      content: ""; width: 0.65rem; height: 0.65rem; flex: none;
+      background: var(--band, transparent); border: 1px solid var(--band, var(--ink-3));
     }
-    .cve:hover { color: var(--accent-bright); text-decoration: underline; }
-    .vendor { color: var(--ink-dim); }
-    .meta { margin-left: auto; font-size: 0.78rem; color: var(--ink-mute); white-space: nowrap; }
-    .summary { margin: 0.4rem 0 0; font-size: 0.85rem; color: var(--ink-dim); line-height: 1.4; }
-    .empty, .error { color: var(--ink-dim); font-size: 0.9rem; padding: 0.5rem 0; }
-    .error { color: #f0a0a0; }
+    .pill.p1 { --band: var(--p1); }
+    .pill.p2 { --band: var(--p2); }
+    .pill.p3 { --band: var(--p3); }
+    .pill.p4 { --band: var(--p4); }
+    /* Unscored is a missing measurement, not a low one — a hollow, dashed
+       square, so it never reads as "assessed and fine". */
+    .pill.unscored { color: var(--ink-3); }
+    .pill.unscored::before { border-style: dashed; }
+    /* Filing forms carry no score, so no band colour: a plain bordered label.
+       Dashed for an amendment, the same "not the whole story" mark as above. */
+    .pill.form8, .pill.form6 {
+      min-width: 0; font-size: 0.75rem; letter-spacing: 0.03em; color: var(--ink-2);
+      border: 1px solid var(--rule); padding: 0.05rem 0.4rem;
+    }
+    .pill.form8::before, .pill.form6::before { display: none; }
+    .pill.amended { border-style: dashed; border-color: var(--ink-3); }
+
+    .cve { font-weight: 700; color: var(--ink); text-decoration: none; }
+    #results .cve { font-family: var(--mono); font-size: 0.9rem; font-weight: 600; }
+    .cve:hover { text-decoration: underline; text-decoration-color: var(--brand); text-underline-offset: 3px; }
+    .vendor { color: var(--ink-2); }
+    .meta { margin-left: auto; font-size: 0.82rem; color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .summary { margin-top: 0.35rem; font-family: var(--serif); font-size: 1rem; line-height: 1.45; color: var(--ink-2); max-width: 46rem; }
+    .empty, .error { color: var(--ink-2); font-size: 0.95rem; padding: 0.5rem 0; }
+    .error { color: var(--error); }
+
+    .colophon {
+      border-top: 1px solid var(--rule); padding: 1rem 0 2.5rem;
+      display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; font-size: 0.8rem; color: var(--ink-3);
+    }
+    /* Page build stamp, not pipeline freshness — this is a single static file
+       with no build step, so the version is the date-time it was last hand-edited,
+       set at the point of each change. */
+    .version { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
-  <header class="topbar">
-    <button class="burger" id="burger" type="button"
-            aria-expanded="false" aria-controls="nav" aria-label="Menu">
-      <span></span><span></span><span></span>
-    </button>
-    <h1>Cyber<span class="accent">LoopNews</span></h1>
-    <span class="freshness" id="freshness"></span>
-    <span class="version" id="version">20260923-141452</span>
-    <nav id="nav" hidden>
-      <a href="#/" data-page="dashboard">Dashboard</a>
-      <a href="#/filings" data-page="filings">SEC Filings</a>
-    </nav>
+  <header class="masthead wrap">
+    <div class="mast-row">
+      <a class="wordmark" href="#/">CyberLoopNews</a>
+      <nav class="sections" aria-label="Sections">
+        <a href="#/" data-page="dashboard">Vulnerabilities</a>
+        <a href="#/filings" data-page="filings">Breach disclosures</a>
+      </nav>
+      <button class="theme-toggle" id="themeToggle" type="button"></button>
+    </div>
+    <p class="dateline"><span id="dateline"></span><span aria-hidden="true">·</span><span id="freshness"></span><span aria-hidden="true">·</span><span class="version" id="version">v20261027-215535</span></p>
   </header>
 
-  <main>
-    <section class="card trend" data-route="dashboard">
-      <h2>CVE volume</h2>
-      <div class="trend-head">
-        <span class="stat">
-          <span class="stat-label">Published in the last 24 hours</span>
-          <span class="stat-value" id="count24">—</span>
-        </span>
-        <p class="caption" style="margin:0">New CVEs per day · last 30 days</p>
-      </div>
-      <svg class="spark" viewBox="0 0 1120 110" preserveAspectRatio="xMidYMid meet"
-           role="img" aria-label="Sparkline of CVEs published per day over the last 30 days"></svg>
-    </section>
+  <main class="wrap">
+    <div data-route="dashboard">
+      <h1 class="visually-hidden">Vulnerabilities</h1>
+      <dl class="figures">
+        <div class="figure"><dt>CVEs published in the last 24 hours</dt><dd id="fig24">—</dd></div>
+        <div class="figure"><dt>Daily average over the last 30 days</dt><dd id="figAvg">—</dd></div>
+        <div class="figure"><dt>P1 CVEs published this week</dt><dd id="figP1">—</dd></div>
+        <div class="figure"><dt>SEC breach disclosures in the last 90 days</dt><dd id="figSec">—</dd></div>
+      </dl>
 
-    <section class="card" data-route="dashboard">
-      <h2 id="chartTitle">Top CVEs by LoopScore</h2>
-      <div class="controls">
-        <span class="seg-label">Published</span>
-        <div class="seg" id="windowSeg" role="group" aria-label="Timeframe">
-          <button type="button" data-window="1">Today</button>
-          <button type="button" data-window="7">7 days</button>
-          <button type="button" data-window="30">30 days</button>
+      <div class="charts">
+        <figure class="chart-fig">
+          <h2 class="chart-title" id="topTitle">The highest-risk CVEs</h2>
+          <p class="chart-dek">Ranked by CyberLoop Score, our 0–100 risk rating. A score of 85 or more triggers an immediate alert.</p>
+          <div class="controls">
+            <div class="tabs" id="windowSeg" role="group" aria-label="Published">
+              <span class="tabs-label">Published</span>
+              <button type="button" data-window="1">Today</button>
+              <button type="button" data-window="7">7 days</button>
+              <button type="button" data-window="30">30 days</button>
+            </div>
+            <div class="tabs" id="topSeg" role="group" aria-label="How many">
+              <span class="tabs-label">Show</span>
+              <button type="button" data-top="10">10</button>
+              <button type="button" data-top="25">25</button>
+              <button type="button" data-top="50">50</button>
+            </div>
+          </div>
+          <div class="chart-box" id="topChart"><p class="state" id="topState">Loading…</p></div>
+          <figcaption class="source">Source: NVD; CyberLoop analysis. Select a row to open it on NVD.</figcaption>
+        </figure>
+
+        <figure class="chart-fig">
+          <h2 class="chart-title" id="volTitle">CVEs published per day</h2>
+          <p class="chart-dek" id="volDek">New CVEs per day over the last 30 days, with the 7-day average.</p>
+          <div class="chart-box" id="volChart"></div>
+          <figcaption class="source">Source: NVD. Days are UTC.</figcaption>
+        </figure>
+      </div>
+
+      <section class="section">
+        <h2 class="section-title">Search the record</h2>
+        <p class="section-dek">Look up a vendor, a product you run or a CVE ID. Results are ranked by CyberLoop Score, highest first.</p>
+        <form class="filters" id="filters">
+          <input id="q" type="search" placeholder="Vendor or product (e.g. linux, python) or CVE-2026-1234" autocomplete="off" />
+          <select id="minScore" aria-label="Minimum CyberLoop Score">
+            <option value="0">Any score</option>
+            <option value="25">P3 and above (25+)</option>
+            <option value="50">P2 and above (50+)</option>
+            <option value="75">P1 only (75+)</option>
+          </select>
+          <select id="days" aria-label="Recent window">
+            <option value="1">Today</option>
+            <option value="7" selected>Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+          </select>
+          <button type="submit">Search</button>
+        </form>
+        <p class="hint">Search the vendor (cisco) or the product you actually run (linux, python); two words narrow the result. Leave the box empty to browse the most recent CVEs — the date window applies only then.</p>
+
+        <div class="key" role="group" aria-label="What the priority bands mean">
+          <span class="key-item"><span class="pill p1">P1</span> <b>75–100</b> act now</span>
+          <span class="key-item"><span class="pill p2">P2</span> <b>50–74</b> this week</span>
+          <span class="key-item"><span class="pill p3">P3</span> <b>25–49</b> not urgent</span>
+          <span class="key-item"><span class="pill p4">P4</span> <b>0–24</b> track only</span>
+          <span class="key-item"><span class="pill unscored">—</span> <b>unscored</b> awaiting NVD</span>
+          <p class="key-note">
+            <strong>CyberLoop Score</strong> is our own 0–100 risk number: the CVE's CVSS severity,
+            weighted by how widespread the affected software is and how exploitable the flaw is
+            in practice. P1s at 85 or above also trigger an immediate alert rather than waiting
+            for the next digest.
+          </p>
         </div>
-        <span class="seg-label">Show</span>
-        <div class="seg" id="topSeg" role="group" aria-label="How many CVEs to chart">
-          <button type="button" data-top="10">10</button>
-          <button type="button" data-top="25">25</button>
-          <button type="button" data-top="50">50</button>
+
+        <div class="results" id="results"></div>
+      </section>
+    </div>
+
+    <div data-route="filings" hidden>
+      <section class="lead">
+        <p class="kicker">Breach disclosures</p>
+        <h1 class="headline">Companies that have told the SEC they were breached</h1>
+        <p class="dek">Every material cybersecurity incident disclosed to the Securities and Exchange Commission that we hold, newest first.</p>
+      </section>
+
+      <section class="section">
+        <!-- Filtering happens in the browser: the whole archive is ~30 KB and is
+             already in memory, so there is nothing to query and no reason to make
+             the user press a button. -->
+        <form class="filters" id="filingFilters" role="search">
+          <input id="fq" type="search" autocomplete="off"
+                 placeholder="Company, ticker or location (e.g. amgen, AMGN, AL)" />
+          <select id="fform" aria-label="Form type">
+            <option value="">All forms</option>
+            <option value="8-K">8-K · US filers</option>
+            <option value="6-K">6-K · foreign filers</option>
+          </select>
+          <select id="fyear" aria-label="Year filed">
+            <option value="">All years</option>
+          </select>
+        </form>
+        <p class="hint">Filters as you type. Locations are EDGAR's own "City, ST" form, so use the
+          two-letter state code. 8-K covers amendments (8-K/A) too — those revise an earlier
+          disclosure and are usually where the real impact is stated.</p>
+
+        <div class="key" role="group" aria-label="What these filings are">
+          <span class="key-item"><span class="pill form8">8-K</span> <b>Item 1.05</b> US filers</span>
+          <span class="key-item"><span class="pill form6">6-K</span> <b>equivalent</b> foreign filers</span>
+          <p class="key-note">
+            Since December 2023 a US public company must report a
+            <strong>material cybersecurity incident</strong> on Form 8-K under Item 1.05,
+            usually within four business days of judging it material. Foreign private
+            issuers have no such item, so their disclosures are picked out of Form 6-K
+            by language instead. This is a company stating on the record that it was
+            breached — a handful arrive in a typical month, so the list is short by
+            nature, not because it is filtered.
+          </p>
         </div>
-      </div>
-      <p class="caption" id="chartCaption">Highest-scoring CVEs · grouped by vendor</p>
-      <svg class="chart" viewBox="0 0 1120 420" preserveAspectRatio="xMidYMid meet"
-           role="img" aria-label="Bar chart of the top CVEs by LoopScore, grouped by vendor"></svg>
-      <p class="state">Loading…</p>
-    </section>
 
-    <section class="card search" data-route="dashboard">
-      <h2>Search the CVE database</h2>
-      <p class="caption">Filter by vendor or product, or look up a CVE by ID · ranked by LoopScore, worst first</p>
-      <form class="filters" id="filters">
-        <input id="q" type="search" placeholder="Vendor or product (e.g. linux, python) or CVE-2026-1234" autocomplete="off" />
-        <select id="minScore" aria-label="Minimum LoopScore">
-          <option value="0">Any score</option>
-          <option value="25">P3+ (≥25)</option>
-          <option value="50">P2+ (≥50)</option>
-          <option value="75">P1 only (≥75)</option>
-        </select>
-        <select id="days" aria-label="Recent window">
-          <option value="1">Today</option>
-          <option value="7" selected>Last 7 days</option>
-          <option value="14">Last 14 days</option>
-          <option value="30">Last 30 days</option>
-        </select>
-        <button type="submit">Search</button>
-      </form>
-      <p class="hint">Search the vendor (cisco) or the product you actually run (linux, python). Two words narrow the result. Leave the box empty to browse the most recent CVEs — the date window applies only then.</p>
-
-      <div class="key" role="group" aria-label="What the priority bands mean">
-        <span class="key-item"><span class="pill p1">P1</span> <b>75–100</b> act now</span>
-        <span class="key-item"><span class="pill p2">P2</span> <b>50–74</b> this week</span>
-        <span class="key-item"><span class="pill p3">P3</span> <b>25–49</b> not urgent</span>
-        <span class="key-item"><span class="pill p4">P4</span> <b>0–24</b> track only</span>
-        <span class="key-item"><span class="pill unscored">—</span> <b>unscored</b> awaiting NVD</span>
-        <p class="key-note">
-          <strong>LoopScore</strong> is our own 0–100 risk number: the CVE's CVSS severity,
-          weighted by how widespread the affected software is and how exploitable the flaw is
-          in practice. Each row shows the LoopScore, coloured by band. P1s at 85 or above
-          also trigger an immediate alert rather than waiting for the next digest.
-        </p>
-      </div>
-
-      <div class="results" id="results"></div>
-    </section>
-
-    <section class="card search" data-route="filings" hidden>
-      <h2>SEC breach disclosures</h2>
-      <p class="caption">Every filing we hold · newest first · click a company to read the filing on sec.gov</p>
-
-      <!-- Filtering happens in the browser: the whole archive is ~30 KB and is
-           already in memory, so there is nothing to query and no reason to make
-           the user press a button. -->
-      <form class="filters" id="filingFilters" role="search">
-        <input id="fq" type="search" autocomplete="off"
-               placeholder="Company, ticker or location (e.g. amgen, AMGN, AL)" />
-        <select id="fform" aria-label="Form type">
-          <option value="">All forms</option>
-          <option value="8-K">8-K · US filers</option>
-          <option value="6-K">6-K · foreign filers</option>
-        </select>
-        <select id="fyear" aria-label="Year filed">
-          <option value="">All years</option>
-        </select>
-      </form>
-      <p class="hint">Filters as you type. Locations are EDGAR's own "City, ST" form, so use the
-        two-letter state code. 8-K covers amendments (8-K/A) too — those revise an earlier
-        disclosure and are usually where the real impact is stated.</p>
-
-      <div class="key" role="group" aria-label="What these filings are">
-        <span class="key-item"><span class="pill form8">8-K</span> <b>Item 1.05</b> US filers</span>
-        <span class="key-item"><span class="pill form6">6-K</span> <b>equivalent</b> foreign filers</span>
-        <p class="key-note">
-          Since December 2023 a US public company must report a
-          <strong>material cybersecurity incident</strong> on Form 8-K under Item 1.05,
-          usually within four business days of judging it material. Foreign private
-          issuers have no such item, so their disclosures are picked out of Form 6-K
-          by language instead. This is a company stating on the record that it was
-          breached — a handful arrive in a typical month, so the list is short by
-          nature, not because it is filtered.
-        </p>
-      </div>
-
-      <div class="results" id="filingsList"></div>
-    </section>
+        <div class="results" id="filingsList"></div>
+      </section>
+    </div>
   </main>
 
+  <footer class="colophon wrap">
+    <span>CyberLoopNews</span>
+    <span>Data: NVD, SEC EDGAR</span>
+  </footer>
+
+  <div id="tip" role="tooltip" hidden></div>
+
   <script>
-    // --- dashboard.json: the top-N chart, the 24h figure and the 30-day trend ---
-    // One fetch. The publisher (dashboard_handler.py) writes every timeframe and
-    // the full 50 rows each run, so the buttons below re-render from data already
-    // in the page rather than making a request per click.
+    // --- shared helpers ---
+    const DUR = matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 450;
+    const fmtInt = (n) => Number(n).toLocaleString("en-US");
+    const fmtScore = (s) => (Number.isInteger(s) ? String(s) : s.toFixed(1));
+    const nvdUrl = (id) => `https://nvd.nist.gov/vuln/detail/${encodeURIComponent(id)}`;
+    const utcDay = (iso) => new Date(iso + "T00:00:00Z");
+    const ALERT_AT = 85;
 
-    // Categorical palette (dark-surface steps). Color follows the VENDOR (identity),
-    // assigned in first-seen order — never by rank, so a data change never repaints.
-    const PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#9085e9", "#008300", "#e66767"];
-    const SVGNS = "http://www.w3.org/2000/svg";
+    // Escape anything from the API before it touches innerHTML — summaries and
+    // vendors are model/CNA-supplied text, so treat them as untrusted.
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-    // viewBox geometry. The 90px below the baseline is for the vendor labels,
-    // which rotate once there are too many groups to write them flat.
-    const plot = { left: 38, right: 1112, top: 22, bottom: 330 }; // bottom = baseline
-    const Y_MAX = 100;                                            // LoopScore is 0–100
-
-    // Everything in the plots is drawn in viewBox units, so the viewBox width
-    // decides how big the labels end up once the SVG is scaled to its container.
-    // A width that suits a desktop card would shrink the type to a few pixels on
-    // a phone, so there are two — picked at draw time, redrawn when the
-    // breakpoint flips.
-    const WIDE_VB = 1120, NARROW_VB = 640;
-    const vbWidth = () => (window.innerWidth < 760 ? NARROW_VB : WIDE_VB);
-    let lastVB = vbWidth();
-
-    const el = (name, attrs, parent) => {
-      const n = document.createElementNS(SVGNS, name);
-      for (const k in attrs) n.setAttribute(k, attrs[k]);
-      if (parent) parent.appendChild(n);
-      return n;
+    // --- tooltip: one element, built with textContent (labels are untrusted) ---
+    const tip = document.getElementById("tip");
+    function showTip(lines, x, y) {
+      tip.textContent = "";
+      lines.forEach((t, i) => {
+        const n = document.createElement(i === 0 ? "strong" : "span");
+        n.textContent = t;
+        tip.appendChild(n);
+      });
+      tip.hidden = false;
+      const r = tip.getBoundingClientRect();
+      const left = Math.min(x + 14, window.innerWidth - r.width - 8);
+      const top = y - r.height - 12 < 8 ? y + 16 : y - r.height - 12;
+      tip.style.left = Math.max(8, left) + "px";
+      tip.style.top = top + "px";
+    }
+    const hideTip = () => { tip.hidden = true; };
+    // Keyboard focus gets the same tooltip, anchored to the element.
+    const tipAt = (node, lines) => {
+      const r = node.getBoundingClientRect();
+      showTip(lines, r.left + r.width / 2, r.top);
     };
-    const yFor = (score) => plot.bottom - (score / Y_MAX) * (plot.bottom - plot.top);
 
-    // Rounded at the data end, square at the baseline — a bar rounded on all four
-    // corners lifts visibly off the axis and misreads its own zero.
-    function barPath(x, y, w, h) {
-      const r = Math.max(0, Math.min(4, w / 2, h));
-      return `M${x},${y + h}V${y + r}a${r},${r} 0 0 1 ${r},${-r}`
-           + `h${w - 2 * r}a${r},${r} 0 0 1 ${r},${r}V${y + h}Z`;
+    // --- theme toggle: Auto (follow the OS) → Light → Dark ---
+    const THEMES = ["auto", "light", "dark"];
+    const themeBtn = document.getElementById("themeToggle");
+    function currentTheme() { return document.documentElement.dataset.theme || "auto"; }
+    function paintThemeBtn() {
+      const t = currentTheme();
+      themeBtn.textContent = "Theme: " + t[0].toUpperCase() + t.slice(1);
+    }
+    themeBtn.addEventListener("click", () => {
+      const next = THEMES[(THEMES.indexOf(currentTheme()) + 1) % THEMES.length];
+      if (next === "auto") delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = next;
+      try { next === "auto" ? localStorage.removeItem("theme") : localStorage.setItem("theme", next); } catch (e) {}
+      paintThemeBtn();
+    });
+    paintThemeBtn();
+  </script>
+
+  <script>
+    // --- dashboard.json: lead, figures and both charts ---
+    // One fetch. The publisher (dashboard_handler.py) writes every timeframe and
+    // the full 50 rows each run, so the tabs re-render from data already in the
+    // page rather than making a request per click.
+    //
+    // The dashboard never shows the briefings or any headline: the top of the
+    // page is the key figures row and nothing else.
+
+    let DATA = null;
+    // NOT named `top` — a global `let top` collides with window.top.
+    let winDays = 7, topN = 10;
+
+    const WINDOW_PHRASE = { 1: "today", 7: "this week", 30: "in the last 30 days" };
+
+    // Today's bucket is still filling, so it is partial and kept out of every
+    // average — otherwise the line always appears to dip at the right edge.
+    function dayStats() {
+      const days = DATA.days || [];
+      const partial = days.length > 0 && days[days.length - 1].day === String(DATA.generated_at || "").slice(0, 10);
+      const complete = partial ? days.slice(0, -1) : days;
+      const avg = complete.length ? d3.mean(complete, (d) => d.count) : 0;
+      const last7 = complete.slice(-7);
+      const avg7 = last7.length ? d3.mean(last7, (d) => d.count) : 0;
+      return { days, partial, avg, avg7 };
     }
 
-    const WINDOW_LABEL = { 1: "today (UTC)", 7: "in the last 7 days", 30: "in the last 30 days" };
+    // Rows are sorted by score, so a count of 50 out of 50 means "at least".
+    function countAtLeast(rows, min) {
+      const n = rows.filter((d) => d.score >= min).length;
+      return n === rows.length && n >= 50 ? "50+" : String(n);
+    }
 
-    let DATA = null;              // the whole published payload
-    // NOT named `top` — a global `let top` collides with window.top, which is a
-    // non-configurable global property, and the whole script fails to parse.
-    let winDays = 7, topN = 10;   // current button state
+    function writeFigures() {
+      const { avg } = dayStats();
+      const now = new Date(DATA.generated_at);
+      const sec90 = (DATA.filings || []).filter((f) =>
+        f.file_date && now - new Date(f.file_date + "T00:00:00Z") <= 90 * 864e5).length;
 
-    function drawChart() {
-      const svg = document.querySelector(".chart");
-      const state = document.querySelector(".state");
-      svg.textContent = "";
+      document.getElementById("fig24").textContent = fmtInt(DATA.last_24h ?? 0);
+      document.getElementById("figAvg").textContent = fmtInt(Math.round(avg));
+      document.getElementById("figP1").textContent = countAtLeast(DATA.windows["7"] || [], 75);
+      document.getElementById("figSec").textContent = String(sec90);
+    }
 
-      const VB = vbWidth();
-      svg.setAttribute("viewBox", `0 0 ${VB} 420`);
-      plot.right = VB - 8;
-      // Never fill the slot. Held at ~4% of the plot so a ten-bar view is as
-      // tight at either width as it was at the original 640.
-      const BAR_MAX = Math.round(VB * 0.04);
+    // --- dateline + freshness ---
+    // generated_at is the publisher's own run time, so the page states when data
+    // last landed rather than claiming the pipeline is up. Prod publishes hourly;
+    // three hours of silence is worth flagging.
+    const STALE_AFTER_MIN = 180;
+    function writeDateline(iso) {
+      const d = new Date(iso);
+      const fresh = document.getElementById("freshness");
+      if (!iso || isNaN(d.getTime())) { fresh.textContent = "Data unavailable"; fresh.dataset.stale = "true"; return; }
+      document.getElementById("dateline").textContent =
+        d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+      const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+      const mins = (Date.now() - d.getTime()) / 60000;
+      const stale = mins > STALE_AFTER_MIN;
+      fresh.textContent = `Updated ${time} UTC` + (stale ? " · data delayed" : "");
+      fresh.dataset.stale = String(stale);
+    }
 
+    // --- chart 1: highest-risk CVEs, horizontal ranked bars ---
+    // Every bar is the one brand colour: length already encodes the score, and
+    // in a top-N nearly everything is P1, so band colours would be a wall of
+    // red. The 85 alert line does the emphasising instead. Rows are keyed on the
+    // CVE id, so switching tabs slides survivors to their new rank.
+    const topBox = document.getElementById("topChart");
+
+    function drawTop(animate) {
       const rows = (DATA.windows[String(winDays)] || []).slice(0, topN);
-      document.getElementById("chartCaption").textContent =
-        `Top ${rows.length} by LoopScore · CVEs published ${WINDOW_LABEL[winDays]} · grouped by vendor`;
+      const state = document.getElementById("topState");
+
+      // Title states the finding when there is one to state.
+      const byVendor = d3.rollups(rows, (v) => v.length, (d) => d.vendor).sort((a, b) => b[1] - a[1]);
+      const phrase = WINDOW_PHRASE[winDays];
+      document.getElementById("topTitle").textContent =
+        byVendor.length > 1 && byVendor[0][1] >= 2 && byVendor[0][1] > byVendor[1][1]
+          ? `${byVendor[0][0]} has ${byVendor[0][1]} of the ${rows.length} highest-risk CVEs published ${phrase}`
+          : `The highest-risk CVEs published ${phrase}`;
+
       if (!rows.length) {
-        state.textContent = `No scored CVEs published ${WINDOW_LABEL[winDays]} yet.`;
-        state.style.display = "";
+        d3.select(topBox).select("svg").remove();
+        state.hidden = false;
+        state.textContent = `No scored CVEs published ${phrase} yet.`;
         return;
       }
-      state.style.display = "none";
+      state.hidden = true;
 
-      // Group by vendor; order vendors by their top score, CVEs within by score.
-      const groups = {};
-      rows.forEach((d) => (groups[d.vendor] ||= []).push(d));
-      const vendors = Object.keys(groups).sort(
-        (a, b) => Math.max(...groups[b].map((d) => d.score)) - Math.max(...groups[a].map((d) => d.score))
+      const W = topBox.clientWidth;
+      const narrow = W < 520;
+      const m = { top: 24, right: 10, bottom: 26, left: narrow ? 132 : 176 };
+      const rowH = topN <= 10 ? 40 : 32;
+      const H = m.top + rows.length * rowH + m.bottom;
+      const x = d3.scaleLinear([0, 100], [m.left, W - m.right]);
+      const barH = Math.min(18, Math.round(rowH * 0.48));
+      const t = d3.transition().duration(animate ? DUR : 0);
+
+      const svg = d3.select(topBox).selectAll("svg").data([null]).join("svg")
+        .attr("width", W).attr("role", "img")
+        .attr("aria-label", `Bar chart: the ${rows.length} highest-risk CVEs published ${phrase}, by CyberLoop Score`);
+      svg.transition(t).attr("height", H);
+
+      // Frame: band names along the top, gridlines at the band edges, the
+      // alert line, and the score axis. Redrawn whole — it is a dozen nodes.
+      const frame = svg.selectAll("g.frame").data([null]).join("g").attr("class", "frame");
+      frame.selectAll("*").remove();
+      const y0 = m.top - 6, y1 = H - m.bottom;
+      [25, 50, 75].forEach((s) =>
+        frame.append("line").attr("class", "gridline").attr("x1", x(s)).attr("x2", x(s)).attr("y1", y0).attr("y2", y1));
+      [[0, 25, "P4"], [25, 50, "P3"], [50, 75, "P2"], [75, ALERT_AT, "P1"]].forEach(([a, b, name]) =>
+        frame.append("text").attr("class", "band-text").attr("x", x((a + b) / 2)).attr("y", m.top - 10)
+          .attr("text-anchor", "middle").text(name));
+      frame.append("line").attr("class", "alert-line")
+        .attr("x1", x(ALERT_AT)).attr("x2", x(ALERT_AT)).attr("y1", y0).attr("y2", y1);
+      frame.append("text").attr("class", "alert-text").attr("x", x((ALERT_AT + 100) / 2)).attr("y", m.top - 10)
+        .attr("text-anchor", "middle").text("ALERT");
+      frame.append("line").attr("class", "baseline").attr("x1", x(0)).attr("x2", x(0)).attr("y1", y0).attr("y2", y1);
+      [0, 25, 50, 75, ALERT_AT, 100].forEach((s) =>
+        frame.append("text").attr("class", "axis-text").attr("x", x(s)).attr("y", y1 + 16)
+          .attr("text-anchor", s === 100 ? "end" : "middle").text(s));
+
+      const layer = svg.selectAll("g.rows").data([null]).join("g").attr("class", "rows");
+      const row = layer.selectAll("a.bar-row").data(rows, (d) => d.cve).join(
+        (enter) => {
+          const a = enter.append("a").attr("class", "bar-row")
+            .attr("transform", (d, i) => `translate(0,${m.top + i * rowH})`)
+            .style("opacity", 0);
+          a.append("rect").attr("class", "hit");
+          a.append("text").attr("class", "row-id");
+          a.append("text").attr("class", "row-vendor");
+          a.append("rect").attr("class", "bar").attr("x", x(0)).attr("width", 0);
+          a.append("text").attr("class", "bar-value").attr("x", x(0));
+          return a;
+        },
+        (update) => update,
+        (exit) => exit.transition(t).style("opacity", 0).remove()
       );
-      vendors.forEach((v) => groups[v].sort((a, b) => b.score - a.score));
-      const colorOf = Object.fromEntries(vendors.map((v, i) => [v, PALETTE[i % PALETTE.length]]));
 
-      // Gaps tighten as the bar count grows, but the within-group gap never drops
-      // below the 2px surface gap that separates touching bars.
-      const N = rows.length, G = vendors.length;
-      const barGap = N > 25 ? 2 : N > 10 ? 4 : 6;
-      const groupGap = N > 25 ? 10 : N > 10 ? 16 : 24;
-      const gaps = (N - G) * barGap + (G - 1) * groupGap;
-      const barW = Math.min(BAR_MAX, (plot.right - plot.left - gaps) / N);
-      // Centre the row when the cap leaves the plot underfilled (few bars).
-      const used = N * barW + gaps;
-      const x0 = plot.left + Math.max(0, (plot.right - plot.left - used) / 2);
+      row.attr("href", (d) => nvdUrl(d.cve)).attr("target", "_blank").attr("rel", "noopener noreferrer")
+        .attr("aria-label", (d) => `${d.cve}, ${d.vendor}, CyberLoop Score ${fmtScore(d.score)}`);
+      row.transition(t)
+        .attr("transform", (d, i) => `translate(0,${m.top + i * rowH})`)
+        .style("opacity", 1);
 
-      // Direct labels stay sparing. The default view labels every bar because ten
-      // of them fit; past that a number on all 25 or 50 is noise, so only each
-      // vendor group's own top bar is labelled — and nothing at all once the bars
-      // are too thin to hang a number over. Every bar keeps its hover tooltip.
-      const labelAll = N <= 10 && barW >= 12;
-      const labelLeaders = !labelAll && barW >= 10;
+      const by = (rowH - barH) / 2;
+      const trim = (s, n) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+      row.select(".hit").attr("x", 0).attr("y", 1).attr("width", W).attr("height", rowH - 2);
+      row.select(".row-id").attr("x", m.left - 10).attr("y", rowH / 2 - 2)
+        .attr("text-anchor", "end").text((d) => d.cve);
+      row.select(".row-vendor").attr("x", m.left - 10).attr("y", rowH / 2 + 12)
+        .attr("text-anchor", "end").text((d) => trim(d.vendor || "", narrow ? 18 : 24));
+      row.select(".bar").attr("y", by).attr("height", barH)
+        .transition(t).attr("x", x(0)).attr("width", (d) => Math.max(0, x(d.score) - x(0)));
+      row.select(".bar-value").attr("y", by + barH / 2).attr("dy", "0.35em").attr("text-anchor", "end")
+        .text((d) => fmtScore(d.score))
+        .transition(t).attr("x", (d) => x(d.score) - 6);
 
-      // Vendor label sizing, decided BEFORE drawing: a label gets its group's
-      // width plus the gap either side of it. Rotating is driven by whether the
-      // names actually fit, not by the bar count — two single-bar groups next to
-      // each other ("Adobe", "WordPress") collide at any N if we only count bars.
-      const trim = (v) => (v.length > 14 ? v.slice(0, 13) + "…" : v);
-      const CHAR_W = 6.3; // ≈ average advance at the 12px label size
-      const slotFor = (v) => groups[v].length * barW + (groups[v].length - 1) * barGap + groupGap;
-      const rotate = vendors.some((v) => trim(v).length * CHAR_W > slotFor(v));
-
-      // y gridlines + axis labels at 0/25/50/75/100.
-      const grid = el("g", { class: "grid" }, svg);
-      for (let s = 0; s <= Y_MAX; s += 25) {
-        const y = yFor(s);
-        el("line", { x1: plot.left, y1: y, x2: plot.right, y2: y }, grid);
-        el("text", { x: plot.left - 8, y: y + 4, "text-anchor": "end", class: "axis-label" }, grid)
-          .textContent = s;
-      }
-
-      // Bars, grouped by vendor.
-      let x = x0;
-      vendors.forEach((vendor) => {
-        const groupStart = x;
-        groups[vendor].forEach((d, i) => {
-          const y = yFor(d.score), h = plot.bottom - y;
-          const g = el("g", { class: "bar" }, svg);
-
-          el("path", { d: barPath(x, y, barW, h), fill: colorOf[vendor] }, g);
-          el("title", {}, g).textContent = `${d.cve} — ${vendor} — LoopScore ${d.score}`;
-
-          if (labelAll || (labelLeaders && i === 0)) {
-            el("text", { x: x + barW / 2, y: y - 6, "text-anchor": "middle", class: "score-label" }, g)
-              .textContent = d.score;
-          }
-          x += barW + barGap;
-        });
-        x += groupGap - barGap; // swap the last intra-gap for a group gap
-
-        // Vendor label under its group. The CVE id and score stay in the hover
-        // tooltip either way, so a dropped label costs nothing but the name.
-        const groupEnd = x - groupGap;
-        if (groupEnd - groupStart < 16) return; // no room even rotated
-        const cx = (groupStart + groupEnd) / 2;
-        const ly = plot.bottom + (rotate ? 16 : 22);
-        const label = el("text", {
-          x: cx, y: ly, "text-anchor": rotate ? "end" : "middle", class: "vendor-label",
-        }, svg);
-        label.textContent = trim(vendor);
-        if (!rotate) return;
-        // Rotated labels end at the anchor and run up-left, so the leftmost
-        // group's name starts off the viewBox and gets clipped. Measure the text
-        // that was actually rendered — a character-width estimate is off by
-        // enough to still clip — and nudge the anchor right by the overhang.
-        // Slightly off-centre under its group beats a cropped vendor name.
-        const overhang = Math.cos(35 * Math.PI / 180) * label.getComputedTextLength();
-        const shifted = cx + Math.max(0, 4 - (cx - overhang));
-        label.setAttribute("x", shifted);
-        label.setAttribute("transform", `rotate(-35, ${shifted}, ${ly})`);
-      });
-
-      // baseline
-      el("line", { x1: plot.left, y1: plot.bottom, x2: plot.right, y2: plot.bottom, stroke: "#38506f" }, svg);
+      const lines = (d) => [`CyberLoop Score ${fmtScore(d.score)}`, d.cve, d.vendor,
+                            d.score >= ALERT_AT ? "Triggered an immediate alert" : ""].filter(Boolean);
+      row.on("pointermove", (e, d) => showTip(lines(d), e.clientX, e.clientY))
+         .on("pointerleave", hideTip)
+         .on("focus", function (e, d) { tipAt(this.querySelector(".bar"), lines(d)); })
+         .on("blur", hideTip);
     }
 
-    function drawSpark(days) {
-      const svg = document.querySelector(".spark");
-      svg.textContent = "";
+    // --- chart 2: daily volume, columns + 7-day average ---
+    // Daily counts are discrete, so columns rather than a line. The average is
+    // the trend; it skips today, which is drawn faded and labelled as partial.
+    const volBox = document.getElementById("volChart");
+
+    function drawVol() {
+      const { days, partial, avg, avg7 } = dayStats();
+
+      const diff = avg ? Math.round((avg7 / avg - 1) * 100) : 0;
+      document.getElementById("volTitle").textContent = Math.abs(diff) < 5
+        ? "CVE volume this week is in line with the monthly average"
+        : `CVE volume this week is running ${Math.abs(diff)}% ${diff > 0 ? "above" : "below"} the monthly average`;
+      document.getElementById("volDek").textContent =
+        "New CVEs published per day over the last 30 days, with the 7-day average."
+        + (partial ? " Today's column is still filling." : "");
+
+      volBox.textContent = "";
       if (!days.length) return;
 
-      // The plot sits between TOP and BASE, with the date labels in the strip
-      // underneath. Width follows the same breakpoint as the bar chart.
-      const SW = vbWidth();
-      svg.setAttribute("viewBox", `0 0 ${SW} 110`);
-      const LEFT = 6, RIGHT = 34, TOP = 18, BASE = 84;
-      const counts = days.map((d) => d.count);
-      const peak = Math.max(...counts, 1);
-      const x = (i) => LEFT + (i * (SW - LEFT - RIGHT)) / Math.max(1, days.length - 1);
-      const y = (c) => BASE - (c / peak) * (BASE - TOP);
+      const W = volBox.clientWidth, H = 280;
+      const m = { top: 22, right: 6, bottom: 26, left: 34 };
+      const x = d3.scaleBand(days.map((d) => d.day), [m.left, W - m.right]).paddingInner(0.2).paddingOuter(0.1);
+      const y = d3.scaleLinear([0, d3.max(days, (d) => d.count)], [H - m.bottom, m.top]).nice();
+      const cx = (d) => x(d.day) + x.bandwidth() / 2;
+      const label = (iso, opts) => utcDay(iso).toLocaleDateString("en-GB", { timeZone: "UTC", ...opts });
 
-      const line = days.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.count).toFixed(1)}`).join("");
-      el("path", { d: `${line}L${x(days.length - 1).toFixed(1)},${BASE}L${x(0).toFixed(1)},${BASE}Z`, class: "spark-area" }, svg);
-      el("path", { d: line, class: "spark-line" }, svg);
+      const svg = d3.select(volBox).append("svg").attr("width", W).attr("height", H)
+        .attr("role", "img").attr("aria-label", "Column chart of CVEs published per day over the last 30 days, with a 7-day average line");
 
-      // Label the peak and the latest point only — a number on all 30 is noise.
-      const peakIdx = counts.indexOf(peak), lastIdx = days.length - 1;
-      const label = (i, anchor) => {
-        el("text", {
-          x: x(i), y: Math.max(10, y(counts[i]) - 9), "text-anchor": anchor, class: "spark-value",
-        }, svg).textContent = counts[i];
-      };
-      if (peakIdx !== lastIdx) label(peakIdx, "middle");
-      label(lastIdx, "end");
-      el("circle", { cx: x(lastIdx), cy: y(counts[lastIdx]), r: 4, class: "spark-dot" }, svg);
-
-      // First and last dates, so the 30 days are anchored to something.
-      const dayLabel = (iso) =>
-        new Date(iso + "T00:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
-      el("text", { x: LEFT, y: 104, class: "spark-axis" }, svg).textContent = dayLabel(days[0].day);
-      el("text", { x: x(lastIdx), y: 104, "text-anchor": "end", class: "spark-axis" }, svg)
-        .textContent = dayLabel(days[lastIdx].day);
-
-      // One hit band per day carrying the exact value on hover.
-      const band = (SW - LEFT - RIGHT) / Math.max(1, days.length - 1);
-      days.forEach((d, i) => {
-        const hit = el("rect", {
-          x: x(i) - band / 2, y: 8, width: band, height: BASE - 8, class: "spark-hit",
-        }, svg);
-        el("title", {}, hit).textContent = `${dayLabel(d.day)} — ${d.count} CVE${d.count === 1 ? "" : "s"}`;
+      y.ticks(4).forEach((v) => {
+        svg.append("line").attr("class", "gridline").attr("x1", m.left).attr("x2", W - m.right).attr("y1", y(v)).attr("y2", y(v));
+        svg.append("text").attr("class", "axis-text").attr("x", m.left - 6).attr("y", y(v)).attr("dy", "0.35em")
+          .attr("text-anchor", "end").text(fmtInt(v));
       });
+
+      const hover = svg.append("rect").attr("class", "hover-band").attr("y", m.top - 8)
+        .attr("height", H - m.bottom - m.top + 8).attr("width", x.step()).style("display", "none");
+
+      svg.append("g").selectAll("rect").data(days).join("rect")
+        .attr("class", (d, i) => "col" + (partial && i === days.length - 1 ? " partial" : ""))
+        .attr("x", (d) => x(d.day)).attr("width", x.bandwidth())
+        .attr("y", (d) => y(d.count)).attr("height", (d) => y(0) - y(d.count));
+
+      // Trailing 7-day mean over complete days only.
+      const complete = partial ? days.slice(0, -1) : days;
+      const rolling = complete.map((d, i) => i < 6 ? null
+        : { day: d.day, v: d3.mean(complete.slice(i - 6, i + 1), (e) => e.count) }).filter(Boolean);
+      const avgOf = new Map(rolling.map((d) => [d.day, d.v]));
+      if (rolling.length > 1) {
+        svg.append("path").attr("class", "avg-line")
+          .attr("d", d3.line().x(cx).y((d) => y(d.v)).curve(d3.curveMonotoneX)(rolling));
+        // Labelled at its left end: the right end is where today's note sits.
+        const start = rolling[0];
+        svg.append("text").attr("class", "note").attr("x", cx(start) - 4).attr("y", y(start.v) - 10)
+          .attr("text-anchor", "start").text("7-day average");
+      }
+      if (partial) {
+        const last = days[days.length - 1];
+        svg.append("text").attr("class", "note").attr("x", cx(last)).attr("y", y(last.count) - 6)
+          .attr("text-anchor", "end").text("today so far");
+      }
+
+      svg.append("line").attr("class", "baseline").attr("x1", m.left).attr("x2", W - m.right).attr("y1", y(0)).attr("y2", y(0));
+      // Mondays, so the weekly rhythm (quiet weekends) lines up with the ticks.
+      days.filter((d) => utcDay(d.day).getUTCDay() === 1).forEach((d) => {
+        svg.append("line").attr("class", "tick").attr("x1", cx(d)).attr("x2", cx(d)).attr("y1", y(0)).attr("y2", y(0) + 4);
+        svg.append("text").attr("class", "axis-text").attr("x", cx(d)).attr("y", H - 6)
+          .attr("text-anchor", "middle").text(label(d.day, { day: "numeric", month: "short" }));
+      });
+
+      // One hit column per day, full height: the reader aims at a date, not
+      // at a 6px-wide bar.
+      const lines = (d, i) => {
+        const isPartial = partial && i === days.length - 1;
+        const a = avgOf.get(d.day);
+        return [`${fmtInt(d.count)} CVEs${isPartial ? " so far" : ""}`,
+                label(d.day, { weekday: "long", day: "numeric", month: "long" }),
+                a != null ? `7-day average ${fmtInt(Math.round(a))}` : ""].filter(Boolean);
+      };
+      svg.append("g").selectAll("rect").data(days).join("rect").attr("class", "vol-hit")
+        .attr("x", (d) => x(d.day) - (x.step() - x.bandwidth()) / 2).attr("width", x.step())
+        .attr("y", m.top - 8).attr("height", H - m.bottom - m.top + 8)
+        .on("pointermove", (e, d) => {
+          const i = days.indexOf(d);
+          hover.style("display", null).attr("x", x(d.day) - (x.step() - x.bandwidth()) / 2);
+          showTip(lines(d, i), e.clientX, e.clientY);
+        })
+        .on("pointerleave", () => { hover.style("display", "none"); hideTip(); });
     }
 
     function setSeg(id, attr, value, onPick) {
-      const seg = document.getElementById(id);
-      [...seg.children].forEach((b) => {
+      document.querySelectorAll(`#${id} button`).forEach((b) => {
         const mine = Number(b.dataset[attr]);
         b.setAttribute("aria-pressed", String(mine === value));
         b.onclick = () => onPick(mine);
       });
     }
     const paintSegs = () => {
-      setSeg("windowSeg", "window", winDays, (v) => { winDays = v; paintSegs(); drawChart(); });
-      setSeg("topSeg", "top", topN, (v) => { topN = v; paintSegs(); drawChart(); });
+      setSeg("windowSeg", "window", winDays, (v) => { winDays = v; paintSegs(); drawTop(true); });
+      setSeg("topSeg", "top", topN, (v) => { topN = v; paintSegs(); drawTop(true); });
     };
 
-    // --- pipeline freshness ---
-    // dashboard.json carries generated_at (the publisher's own run time), so the
-    // bar can report when data last landed rather than claiming the pipeline is
-    // up. Prod publishes hourly; three hours of silence is worth flagging.
-    const STALE_AFTER_MIN = 180;
-
-    function agoText(iso) {
-      const then = new Date(iso);
-      if (!iso || isNaN(then.getTime())) return null;
-      const mins = Math.max(0, Math.round((Date.now() - then.getTime()) / 60000));
-      if (mins < 1) return { text: "just now", mins };
-      if (mins < 60) return { text: mins + " min ago", mins };
-      const hrs = Math.round(mins / 60);
-      if (hrs < 24) return { text: hrs + (hrs === 1 ? " hour ago" : " hours ago"), mins };
-      const days = Math.round(hrs / 24);
-      return { text: days + (days === 1 ? " day ago" : " days ago"), mins };
-    }
-
-    function showFreshness(iso) {
-      const el = document.getElementById("freshness");
-      const ago = agoText(iso);
-      if (!ago) { el.textContent = ""; return; }
-      el.textContent = "updated " + ago.text;
-      el.dataset.stale = String(ago.mins > STALE_AFTER_MIN);
-    }
+    // Charts draw at the container's real pixel width, so text stays the same
+    // size on a phone as on a desktop. Redraw when a container changes width.
+    const widths = new WeakMap();
+    const ro = new ResizeObserver((entries) => {
+      if (!DATA) return;
+      for (const e of entries) {
+        const w = Math.round(e.contentRect.width);
+        if (widths.get(e.target) === w) continue;
+        widths.set(e.target, w);
+        e.target === topBox ? drawTop(false) : drawVol();
+      }
+    });
 
     fetch("/data/dashboard.json")
-      .then((res) => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then((res) => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
       .then((data) => {
         DATA = data;
-        document.getElementById("count24").textContent = (data.last_24h ?? 0).toLocaleString();
-        showFreshness(data.generated_at);
-        drawSpark(data.days || []);
+        writeDateline(data.generated_at);
+        writeFigures();
         paintSegs();
-        drawChart();
+        drawTop(false);
+        drawVol();
+        ro.observe(topBox);
+        ro.observe(volBox);
         renderFilings();
       })
       .catch((err) => {
-        document.querySelector(".state").textContent = "Could not load data (" + err.message + ")";
+        document.getElementById("topState").textContent = "Could not load data (" + err.message + ").";
         const fresh = document.getElementById("freshness");
-        fresh.textContent = "data unavailable";
+        fresh.textContent = "Data unavailable";
         fresh.dataset.stale = "true";
       });
   </script>
@@ -675,11 +838,6 @@
     const CVE_RE = /^CVE-\d{4}-\d{4,}$/i;
     const results = document.getElementById("results");
     const form = document.getElementById("filters");
-
-    // Escape anything from the API before it touches innerHTML — the summary and
-    // vendor are model/CNA-supplied text, so treat them as untrusted.
-    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
     function buildParams() {
       const q = document.getElementById("q").value.trim();
@@ -717,13 +875,13 @@
       const body = rows.map((r) => {
         const cls = PRIORITY_CLASS[r.priority] || "unscored";
         const score = r.loop_score == null ? "—" : r.loop_score;
-        // The badge's number is the score and its colour is the band, so spell
-        // both out for hover and for screen readers — colour alone carries meaning.
+        // The number is the score and the square is the band, so spell both out
+        // for hover and for screen readers — colour alone carries no meaning.
         const pillLabel = r.loop_score == null
           ? "Not yet scored — NVD has not published a CVSS base score"
-          : `LoopScore ${r.loop_score} · ${r.priority || "unrated"}`;
+          : `CyberLoop Score ${r.loop_score} · ${r.priority || "unrated"}`;
         const line = [
-          r.severity ? esc(r.severity) : "",
+          r.severity ? esc(r.severity[0] + r.severity.slice(1).toLowerCase()) : "",
           r.cvss == null ? "" : "CVSS " + esc(r.cvss),
           r.published ? esc(String(r.published).slice(0, 10)) : "",
         ].filter(Boolean).join(" · ");
@@ -742,13 +900,18 @@
     }
 
     async function search() {
-      results.innerHTML = '<p class="empty">Searching…</p>';
+      // Keep the previous results on screen, faded, instead of flashing a
+      // placeholder — no layout jump while the request is in flight.
+      results.style.opacity = results.childElementCount ? "0.5" : "";
+      if (!results.childElementCount) results.innerHTML = '<p class="empty">Searching…</p>';
       try {
         const res = await fetch("/api/search?" + buildParams().toString());
         if (!res.ok) throw new Error("HTTP " + res.status);
         render(await res.json());
       } catch (e) {
         results.innerHTML = '<p class="error">Search failed (' + esc(e.message) + "). Try again in a moment.</p>";
+      } finally {
+        results.style.opacity = "";
       }
     }
 
@@ -767,11 +930,6 @@
     // publishes them), so this page costs no extra request — DATA is already
     // loaded, or is on its way and the fetch above calls back in here.
 
-    const NAV = document.getElementById("nav");
-    const BURGER = document.getElementById("burger");
-
-    // The archive is small and fully in memory, so a filter is a plain
-    // Array.filter — no request, no debounce, no pagination.
     // Lowercase and split on anything that isn't a letter or digit, so
     // "GREENPOWER MOTOR Co INC." and "Prattville, AL" both reduce to words.
     const tokens = (text) =>
@@ -788,10 +946,9 @@
         if (form && !String(f.form || "").startsWith(form)) return false;
         if (year && String(f.file_date || "").slice(0, 4) !== year) return false;
         if (!terms.length) return true;
-        // Match on WORD PREFIXES, not raw substrings. A plain `includes` made
-        // short queries useless — "AL" (the state code) also matched "GLOBAL"
-        // and "Alpha", returning half the archive. Every typed term has to
-        // start some word in the filing, so multiple words narrow.
+        // Match on WORD PREFIXES, not raw substrings, so "AL" (the state code)
+        // doesn't also match "GLOBAL" and "Alpha". Every typed term has to start
+        // some word in the filing, so multiple words narrow.
         const words = tokens([f.company, f.tickers, f.location, f.form].join(" "));
         return terms.every((t) => words.some((w) => w.startsWith(t)));
       });
@@ -826,8 +983,8 @@
         box.innerHTML = '<p class="empty">No filings match those filters.</p>';
         return;
       }
-      // Same escaping rule as the CVE rows: company names and URLs come from
-      // EDGAR, so nothing reaches innerHTML unescaped.
+      // Company names and URLs come from EDGAR, so nothing reaches innerHTML
+      // unescaped.
       const meta = rows.length === all.length
         ? `${all.length} disclosures on file`
         : `${rows.length} of ${all.length} disclosures`;
@@ -836,14 +993,11 @@
         rows.map((f) => {
           const name = esc(f.company);
           // Item codes are deliberately NOT shown: every 8-K here is an Item
-          // 1.05 by construction (it is the selector), so printing it on every
-          // row is noise, and 6-K has no items at all.
+          // 1.05 by construction, and 6-K has no items at all.
           const line = [
             f.location ? esc(f.location) : "",
             f.file_date ? "filed " + esc(f.file_date) : "",
           ].filter(Boolean).join(" · ");
-          // A filing without a resolvable primary-document URL still deserves a
-          // row — the company and the date are the story; the link is a bonus.
           const title = f.url
             ? `<a class="cve" href="${esc(f.url)}" target="_blank" rel="noopener noreferrer">${name}</a>`
             : `<span class="cve">${name}</span>`;
@@ -860,11 +1014,6 @@
         }).join("");
     }
 
-    const setMenu = (open) => {
-      NAV.hidden = !open;
-      BURGER.setAttribute("aria-expanded", String(open));
-    };
-
     function route() {
       // Anything unrecognised falls back to the dashboard, so a stale or
       // hand-typed hash can never leave the page blank.
@@ -872,37 +1021,21 @@
       document.querySelectorAll("[data-route]").forEach((sec) => {
         sec.hidden = sec.dataset.route !== page;
       });
-      document.querySelectorAll("#nav a").forEach((a) => {
-        // aria-current takes the token "page" or nothing at all — "false" would
-        // announce every link as current.
+      document.querySelectorAll(".sections a").forEach((a) => {
+        // aria-current takes the token "page" or nothing at all.
         if (a.dataset.page === page) a.setAttribute("aria-current", "page");
         else a.removeAttribute("aria-current");
       });
-      setMenu(false);
+      hideTip();
       if (page === "filings") renderFilings();
+      // A new section starts at its top; scroll-behavior makes this a glide.
+      if (window.scrollY > 0) window.scrollTo({ top: 0 });
     }
 
     // Enter must not submit-and-reload; the filtering is already live.
     document.getElementById("filingFilters").addEventListener("submit", (e) => e.preventDefault());
     ["fq", "fform", "fyear"].forEach((id) =>
       document.getElementById(id).addEventListener("input", renderFilings));
-
-    BURGER.addEventListener("click", () => setMenu(NAV.hidden));
-    // Click-away and Escape both close it — a menu with no way out but a second
-    // click on the button is a menu people leave open.
-    document.addEventListener("click", (e) => {
-      if (!NAV.hidden && !e.target.closest(".topbar")) setMenu(false);
-    });
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") setMenu(false); });
-    // Only redraw when the breakpoint actually flips: resizing inside a band
-    // changes nothing, because the SVG already scales itself.
-    window.addEventListener("resize", () => {
-      const vb = vbWidth();
-      if (vb === lastVB || !DATA) return;
-      lastVB = vb;
-      drawSpark(DATA.days || []);
-      drawChart();
-    });
 
     window.addEventListener("hashchange", route);
     route();

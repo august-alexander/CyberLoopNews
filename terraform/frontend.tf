@@ -35,6 +35,18 @@ resource "aws_s3_object" "index" {
   cache_control = "max-age=30" # edge caches 30s, then revalidates — deploys go live within 30s, no invalidation needed
 }
 
+# D3, self-hosted rather than pulled from a public CDN. The version is in the
+# filename, so the file at this key never changes and can be cached for a year;
+# an upgrade is a new file + a new key, and index.html points at it.
+resource "aws_s3_object" "d3" {
+  bucket        = aws_s3_bucket.site.id
+  key           = "d3-7.9.0.min.js"
+  source        = "${path.module}/../web/d3-7.9.0.min.js"
+  etag          = filemd5("${path.module}/../web/d3-7.9.0.min.js")
+  content_type  = "application/javascript"
+  cache_control = "public, max-age=31536000, immutable"
+}
+
 # Origin Access Control: lets THIS distribution (and nothing else) read the
 # private bucket over SigV4. The modern replacement for the legacy OAI.
 resource "aws_cloudfront_origin_access_control" "site" {
